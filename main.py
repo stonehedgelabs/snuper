@@ -39,6 +39,8 @@ team_logo = "https://sportsbook.draftkings.com/static/logos/teams/nba"
 nba_sportsbook_url = "https://sportsbook.draftkings.com/leagues/basketball/nba"
 spread_market_type = "Spread"
 # spread_market_id = "2_80876023"
+game_runtime = 3 * 3600 + 900  # 3.25 hours
+log_count = 100
 
 
 def flatten_markets(data: dict) -> list:
@@ -305,7 +307,7 @@ class Event:
 
     def is_finished(self) -> bool:
         delta = dt.datetime.now(dt.timezone.utc) - self.start_time_utc
-        return delta.total_seconds() > 4 * 3600
+        return delta.total_seconds() > game_runtime
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -485,32 +487,47 @@ class WebsocketRunner:
         path.parent.mkdir(parents=True, exist_ok=True)
         start = time.time()
         events = 0
+        last_event_time = time.time()
 
         while True:
-            # Exit gracefully if cancelled
             if asyncio.current_task() and asyncio.current_task().cancelled():
                 self.log.info(f"Websocket runner for {game.event_id} cancelled, shutting down.")
                 break
+
             try:
                 self.log.info(f"Connecting websocket for {game}")
                 async with websockets.connect(self.url, max_size=None) as ws:
                     await ws.send(msgpack.packb(subscribe_payload))
                     self.log.info(f"Subscribed to {game} League({league})")
+
                     with open(path, "a", encoding="utf-8") as writer:
                         while True:
-                            # Check again for cancellation
+                            # Timeout if no events seen in 2 minutes
+                            if time.time() - last_event_time > 120:
+                                self.log.info(f"No events for 2 minutes; assuming game {game.event_id} has ended.")
+                                return
+
                             if asyncio.current_task() and asyncio.current_task().cancelled():
                                 self.log.warning(f"Websocket runner for {game.event_id} cancelled mid-loop.")
                                 return
-                            msg = await ws.recv()
+
+                            try:
+                                msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                            except asyncio.TimeoutError:
+                                # No message for 10s, check again
+                                continue
+
                             logger.debug(f"Received bytes: {len(msg)}")
 
                             try:
                                 hits = process_dk_frame(msg, game.event_id, state, selection_ids, market_ids)
+                                if hits:
+                                    last_event_time = time.time()  # reset idle timer
+
                                 events_per_second = events / (time.time() - start)
-                                if events % 100 == 0:
+                                if events % log_count == 0:
                                     logging.info(
-                                        f"{CYAN}Processing:\t{events:,.0f} events\t\t{events_per_second:.1f} events/sec.\t\t{game}{RESET}"
+                                        f"{CYAN}Processing:\t{events:,.0f} events\t\t{events_per_second:.1f} events/sec.\t\t\t{game}{RESET}"
                                     )
                                 events += 1
 
@@ -521,6 +538,7 @@ class WebsocketRunner:
                                     writer.flush()
                             except Exception as e:
                                 self.log.warning(f"Decode error ({game.event_id}): {e}")
+
             except (
                 websockets.exceptions.ConnectionClosedError,
                 websockets.exceptions.ConnectionClosedOK,
@@ -593,6 +611,8 @@ class Monitor:
                     self.log.info(f"Starting monitor for {game}")
                     task = asyncio.create_task(self.runner.run(game, self.output_dir, league))
                     self.active_tasks[key] = task
+                else:
+                    self.log.info(f"Already running task for {game}")
 
 
 async def main() -> None:
@@ -625,6 +645,37 @@ async def main() -> None:
                 logger.error(f"Cycle error: {e}")
             logger.info(f"Sleeping {args.interval}s before next cycle...")
             await asyncio.sleep(args.interval)
+
+
+import uuid
+import pytest
+import shutil
+
+
+@pytest.mark.asyncio
+async def test_scrape_and_save_all_writes_non_empty_games() -> None:
+    scraper = EventScraper()
+    base_dir = pathlib.Path("/tmp") / f"dk-event-monitor-test-{uuid.uuid4().hex}"
+    output_dir = base_dir / "data"
+    output_dir.mkdir(parents=True, exist_ok=False)
+
+    try:
+        paths = await scraper.scrape_and_save_all(output_dir)
+
+        assert paths, "Expected scrape to produce files"
+        for path in paths:
+            assert path.parent == output_dir
+            assert path.exists()
+            league = path.stem.split("-")[0]
+            with path.open("r", encoding="utf-8") as fp:
+                payload = json.load(fp)
+            assert isinstance(payload, list)
+            assert payload is not None, f"Expected events written for {league}"
+            for item in payload:
+                assert item["event_id"]
+                assert item["event_url"]
+    finally:
+        shutil.rmtree(base_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -15,11 +15,15 @@ dependencies = [
     "websockets",
     "black",
     "playwright",
-    "tzlocal"
+    "tzlocal",
+    "pytest (>=8.4.2,<9.0.0)",
+    "pytest-asyncio (>=1.2.0,<2.0.0)"
 ]
 [project.optional-dependencies]
 dev = [
     "black",
+    "pytest",
+    "pytest-asyncio",
 ]
 
 [project.scripts]

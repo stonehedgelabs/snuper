@@ -9,12 +9,11 @@ Scrapes Draftkings endpoints for sporting event data, and uses that scraped data
 Scrape today's scheduled games/events for a given league and save that info to a specified location.
 
 ```text
-$ python main.py scrape --help
-usage: main.py scrape [-h] [--league LEAGUE] -o OUTPUT_DIR
+$ python main.py scrape --help            
+usage: main.py scrape [-h] -o OUTPUT_DIR
 
 options:
   -h, --help            show this help message and exit
-  --league LEAGUE       League (nba/nfl)
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Output directory for the JSON file
 ```

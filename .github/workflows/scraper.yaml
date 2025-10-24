@@ -8,9 +8,8 @@ on:
 
 jobs:
   scrape:
+    environment: ci
     runs-on: ubuntu-latest
-    env:
-      DRAFTKINGS_WS_JWT: ${{ secrets.DRAFTKINGS_WS_JWT }}
     strategy:
       fail-fast: false
       matrix:
