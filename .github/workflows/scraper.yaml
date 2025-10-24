@@ -1,0 +1,49 @@
+name: Daily DraftKings Event Scraper
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *"  # 6am ET (Daylight Time)
+    - cron: "0 11 * * *"  # 6am ET (Standard Time)
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    env:
+      DRAFTKINGS_WS_JWT: ${{ secrets.DRAFTKINGS_WS_JWT }}
+    strategy:
+      fail-fast: false
+      matrix:
+        league: [nba, nfl]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Determine 6am in America/New_York
+        id: timecheck
+        run: |
+          echo "hour=$(TZ=America/New_York date +%H)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.timecheck.outputs.hour == '06'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        if: steps.timecheck.outputs.hour == '06'
+        run: |
+          python -m pip install --upgrade pip && \
+            pip install poetry && \
+            poetry install && \
+            python -m playwright install --with-deps chromium
+
+      - name: Prepare output directory
+        if: steps.timecheck.outputs.hour == '06'
+        run: mkdir -p data
+
+      - name: Run daily scrape
+        if: steps.timecheck.outputs.hour == '06'
+        run: |
+          poetry run python main.py scrape --league "${{ matrix.league }}" --output-dir ./data
