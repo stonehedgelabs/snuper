@@ -11,7 +11,7 @@ import types
 import re
 import zoneinfo
 import pathlib
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse, unquote
 
 import httpx
@@ -33,14 +33,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 url = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
-# jwt = os.environ["DRAFTKINGS_WS_JWT"]
-# nba_event_group_id = 42648
-team_logo = "https://sportsbook.draftkings.com/static/logos/teams/nba"
-nba_sportsbook_url = "https://sportsbook.draftkings.com/leagues/basketball/nba"
 spread_market_type = "Spread"
 # spread_market_id = "2_80876023"
 game_runtime = 3 * 3600 + 900  # 3.25 hours
 log_count = 100
+
+
+def event_filepath(output_dir: pathlib.Path, league: str) -> pathlib.Path:
+    path = pathlib.Path(output_dir) / "events"
+    timestamp = dt.datetime.now().strftime("%Y%m%d")
+    filename = f"{league}-{timestamp}.json"
+    return path.joinpath(filename)
+
+
+def odds_filepath(output_dir: pathlib.Path, league: str, event_id: str) -> pathlib.Path:
+    path = pathlib.Path(output_dir) / "odds"
+    timestamp = dt.datetime.now().strftime("%Y%m%d")
+    filename = f"{league}-{timestamp}-{event_id}.json"
+    return path.joinpath(filename)
 
 
 def flatten_markets(data: dict) -> list:
@@ -327,7 +337,7 @@ class Event:
 
 class EventScraper:
     def __init__(self) -> None:
-        self.leagues = ["nba", "nfl"]
+        self.leagues = ["nba", "nfl", "mlb"]
         self.log = logging.getLogger(self.__class__.__name__)
         self.local_tz = get_localzone()
         self.pattern_event_url = re.compile(
@@ -359,6 +369,8 @@ class EventScraper:
             url = "https://sportsbook.draftkings.com/leagues/basketball/nba"
         elif league.lower() == "nfl":
             url = "https://sportsbook.draftkings.com/leagues/football/nfl"
+        elif league.lower() == "mlb":
+            url = "https://sportsbook.draftkings.com/leagues/baseball/mlb"
         else:
             raise ValueError(f"Unsupported league: {league}")
 
@@ -402,11 +414,12 @@ class EventScraper:
         self.log.info(f"Total {len(events)} events for today.")
         return events
 
-    def save(self, games: list[Event], league: str, output_dir: pathlib.Path) -> pathlib.Path:
-        path = pathlib.Path(output_dir)
-        timestamp = dt.datetime.now().strftime("%Y%m%d")
-        filename = f"{league}-{timestamp}.json"
-        path = path / filename
+    def save(self, games: list[Event], league: str, output_dir: pathlib.Path) -> Optional[pathlib.Path]:
+        if not games:
+            self.log.warning(f"No games to save for {league} today.")
+            return
+
+        path = event_filepath(output_dir, league)
         with open(path, "w", encoding="utf-8") as fp:
             json.dump([g.to_dict() for g in games], fp, indent=2)
         self.log.info(f"Saved {len(games)} events to {path}")
@@ -417,10 +430,16 @@ class EventScraper:
         paths = []
         for league in self.leagues:
             try:
+                path = event_filepath(output_dir, league)
+                if path.exists():
+                    self.log.warning(f"File {path} already exists. Skipping.")
+                    continue
+
                 self.log.info(f"Scraping {league.upper()}...")
                 games = await self.scrape_today(league)
                 path = self.save(games, league, output_dir)
-                paths.append(path)
+                if path:
+                    paths.append(path)
             except Exception as e:
                 self.log.error(f"Failed to scrape/save {league}: {e}")
         return paths
@@ -482,8 +501,7 @@ class WebsocketRunner:
             "method": "subscribe",
             "id": "dk-ws-client",
         }
-        filename = f"{league}-{game.event_id}.json"
-        path = pathlib.Path(output_dir) / filename
+        path = odds_filepath(output_dir, league, game.event_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         start = time.time()
         events = 0
