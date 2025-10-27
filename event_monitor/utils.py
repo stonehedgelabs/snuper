@@ -15,7 +15,10 @@ def decimal_to_american(decimal_odds: str) -> str:
             return f"-{int(100 / (d - 1)):d}"
     except Exception:
         return None
+
+
 def load_events(file_path: pathlib.Path) -> tuple[str, list[Event]]:
+    """Read a JSON snapshot and return its league plus Event objects."""
     league = file_path.stem.split("-")[0]
     with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -24,5 +27,15 @@ def load_events(file_path: pathlib.Path) -> tuple[str, list[Event]]:
         start_time = dt.datetime.fromisoformat(e["start_time"])
         away = tuple(e["away"])
         home = tuple(e["home"])
-        events.append(Event(e["event_id"], e["league"], e["event_url"], start_time, away, home, e["selections"]))
+        events.append(
+            Event(
+                e["event_id"],
+                e["league"],
+                e["event_url"],
+                start_time,
+                away,
+                home,
+                e["selections"],
+            )
+        )
     return league, events

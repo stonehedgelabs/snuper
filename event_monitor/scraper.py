@@ -7,19 +7,24 @@ import logging
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from event_monitor.constants import DATE_STAMP_FORMAT
 from event_monitor.t import Event
 
 __all__ = ["BaseEventScraper", "event_filepath", "odds_filepath"]
 
-_TIMESTAMP_FORMAT = "%Y%m%d"
-
 
 def _current_stamp(now: dt.datetime | None = None) -> str:
+    """Return the YYYYMMDD stamp used when naming snapshot files."""
+
     current = now or dt.datetime.now()
-    return current.strftime(_TIMESTAMP_FORMAT)
+    return current.strftime(DATE_STAMP_FORMAT)
 
 
-def event_filepath(output_dir: Path, league: str, *, timestamp: str | None = None) -> Path:
+def event_filepath(
+    output_dir: Path, league: str, *, timestamp: str | None = None
+) -> Path:
+    """Build the filesystem path for an event snapshot JSON file."""
+
     ts = timestamp or _current_stamp()
     return Path(output_dir) / "events" / f"{league}-{ts}.json"
 
@@ -31,14 +36,18 @@ def odds_filepath(
     *,
     timestamp: str | None = None,
 ) -> Path:
+    """Build the filesystem path for an odds stream JSONL log."""
+
     ts = timestamp or _current_stamp()
     return Path(output_dir) / "odds" / f"{league}-{ts}-{event_id}.json"
 
 
 class BaseEventScraper(abc.ABC):
-    """Shared behavior for sportsbook event scrapers."""
+    """Base class that provides league bookkeeping and persistence helpers."""
 
     def __init__(self, leagues: Sequence[str]) -> None:
+        """Record the set of supported leagues for the scraper instance."""
+
         if not leagues:
             raise ValueError("leagues must not be empty")
         self.leagues = [league.lower() for league in leagues]
@@ -46,10 +55,12 @@ class BaseEventScraper(abc.ABC):
 
     @abc.abstractmethod
     async def scrape_today(self, league: str) -> list[Event]:
-        """Return events scheduled for the current day in the target league."""
+        """Return the list of events scheduled today for ``league``."""
 
-    def save(self, events: Iterable[Event], league: str, output_dir: Path) -> Path | None:
-        """Persist scraped events without overwriting existing artifacts."""
+    def save(
+        self, events: Iterable[Event], league: str, output_dir: Path
+    ) -> Path | None:
+        """Persist scraped events to disk unless a prior snapshot exists."""
 
         output_dir = Path(output_dir)
         data = list(events)
@@ -69,7 +80,7 @@ class BaseEventScraper(abc.ABC):
         return path
 
     async def scrape_and_save_all(self, output_dir: Path) -> list[Path]:
-        """Scrape every configured league and save results, skipping pre-existing files."""
+        """Scrape each configured league and persist the resulting snapshots."""
 
         output_dir = Path(output_dir)
         paths: list[Path] = []
@@ -81,7 +92,9 @@ class BaseEventScraper(abc.ABC):
 
             try:
                 events = await self.scrape_today(league)
-            except Exception as exc:  # pragma: no cover - safety net for CLI usage
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - safety net for CLI usage
                 self.log.error("Failed to scrape %s: %s", league, exc)
                 continue
 

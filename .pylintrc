@@ -1,0 +1,90 @@
+[MASTER]
+# Python version
+py-version=3.12
+
+# Files and directories to ignore
+ignore=venv,env,__pycache__,build,dist,.git,.tox
+ignore-patterns=test_.*\.py
+
+# Enable useful plugins
+load-plugins=pylint.extensions.typing,pylint.extensions.docparams
+
+# Allow both short and long modules
+max-module-lines=1500
+
+# Persistent messages between runs
+persistent=no
+
+# Allow using f-strings, match/case, walrus, etc.
+extension-pkg-whitelist=
+
+[MESSAGES CONTROL]
+# Disable overly pedantic or outdated rules
+disable=
+    C0114,  # missing-module-docstring
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    R0903,  # too-few-public-methods (common for dataclasses)
+    R0902,  # too-many-instance-attributes (fine for data models)
+    R0913,  # too-many-arguments (fine for structured tasks)
+    R0914,  # too-many-locals
+    R0915,  # too-many-statements
+    W0511,  # FIXME/TODO comments
+    W0703,  # broad-except (okay for top-level asyncio)
+    C0103,  # invalid-name (snake_case already enforced by formatter)
+    R0801,  # duplicate-code (too noisy across async patterns)
+    E0401,  # import-error (often false positive in virtualenvs)
+    R1732,  # consider-using-with (handled safely in Playwright contexts)
+
+# Enable a few important modern warnings
+enable=
+    W0707,  # raise-missing-from
+    W1514,  # unspecified-encoding
+    E1136,  # unsubscriptable-object
+    E1128,  # assignment-from-none
+
+[REPORTS]
+output-format=colorized
+score=no
+
+[FORMAT]
+max-line-length=100
+indent-string='    '
+good-names=i,j,k,ex,Run,_,pk,id
+
+[DESIGN]
+max-args=8
+max-attributes=12
+max-branches=20
+max-locals=25
+max-returns=8
+max-statements=80
+
+[TYPECHECK]
+ignored-modules=httpx,playwright,tzlocal,zoneinfo,asyncio
+ignored-classes=Session,ContextManager,Response,Any
+
+[LOGGING]
+logging-format-style=new
+logging-modules=logging
+
+[IMPORTS]
+known-standard-library=dataclasses,asyncio,typing
+known-third-party=httpx,playwright,tzlocal
+known-local-folder=event_monitor
+
+[SIMILARITIES]
+min-similarity-lines=8
+
+[VARIABLES]
+# Allow unused variables prefixed with underscore
+dummy-variables-rgx=^(_|unused_|ignored_).*
+
+[EXCEPTIONS]
+overgeneral-exceptions=Exception
+
+[SPELLING]
+spelling-dict=en_US
+spelling-ignore-words=asyncio,Playwright,httpx,pytest
+spelling-private-dict-file=
+spelling-store-unknown-words=no
