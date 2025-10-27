@@ -7,9 +7,8 @@ import json
 import logging
 import os
 import time
-import types
 import re
-import zoneinfo
+import types
 import pathlib
 from typing import Any, Optional
 from urllib.parse import urlparse, unquote
@@ -20,6 +19,9 @@ import websockets
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 from tzlocal import get_localzone
+
+from event_monitor.t import Event
+from event_monitor.utils import load_events
 
 CYAN = "\033[96m"
 RED = "\033[91m"
@@ -35,8 +37,17 @@ logger = logging.getLogger(__name__)
 url = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
 spread_market_type = "Spread"
 # spread_market_id = "2_80876023"
-game_runtime = 3 * 3600 + 900  # 3.25 hours
-log_count = 100
+default_loop_interval = 30
+max_time_since_last_event = 60 * 10  # 10 mins
+game_runtime = 5 * 3600  # 5 hours
+event_log_interval = 500
+
+
+DRAFTKINGS_LEAGUE_URLS = {
+    "nfl": "https://sportsbook.draftkings.com/leagues/football/nfl",
+    "mlb": "https://sportsbook.draftkings.com/leagues/baseball/mlb",
+    "nba": "https://sportsbook.draftkings.com/leagues/basketball/nba",
+}
 
 
 def event_filepath(output_dir: pathlib.Path, league: str) -> pathlib.Path:
@@ -302,39 +313,6 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
     return hits
 
 
-class Event:
-    def __init__(
-        self, event_id: str, url: str, start_time_utc: dt.datetime, away: tuple[str, str], home: tuple[str, str]
-    ) -> None:
-        self.event_id = event_id
-        self.url = url
-        self.start_time_utc = start_time_utc
-        self.away = away
-        self.home = home
-
-    def has_started(self) -> bool:
-        return self.start_time_utc <= dt.datetime.now(dt.timezone.utc)
-
-    def is_finished(self) -> bool:
-        delta = dt.datetime.now(dt.timezone.utc) - self.start_time_utc
-        return delta.total_seconds() > game_runtime
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "event_id": self.event_id,
-            "event_url": self.url,
-            "start_time_utc": self.start_time_utc.isoformat(),
-            "start_time_est": self.start_time_utc.astimezone(zoneinfo.ZoneInfo("America/New_York")).isoformat(),
-            "start_time_pst": self.start_time_utc.astimezone(zoneinfo.ZoneInfo("America/Los_Angeles")).isoformat(),
-            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "away": self.away,
-            "home": self.home,
-        }
-
-    def __repr__(self) -> str:
-        return f"<Event {self.event_id} {self.away[0]}@{self.home[0]}>"
-
-
 class EventScraper:
     def __init__(self) -> None:
         self.leagues = ["nba", "nfl", "mlb"]
@@ -365,15 +343,7 @@ class EventScraper:
         return _parse_team(away_part), _parse_team(home_part)
 
     async def scrape_today(self, league: str) -> list[Event]:
-        if league.lower() == "nba":
-            url = "https://sportsbook.draftkings.com/leagues/basketball/nba"
-        elif league.lower() == "nfl":
-            url = "https://sportsbook.draftkings.com/leagues/football/nfl"
-        elif league.lower() == "mlb":
-            url = "https://sportsbook.draftkings.com/leagues/baseball/mlb"
-        else:
-            raise ValueError(f"Unsupported league: {league}")
-
+        url = DRAFTKINGS_LEAGUE_URLS[league]
         self.log.info(f"Detected local timezone: {self.local_tz}")
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -404,13 +374,14 @@ class EventScraper:
                 dt_local = dt_utc.astimezone(self.local_tz)
                 if start_of_day <= dt_local < end_of_day:
                     event_id = event_url.split("/")[-1]
-                    teams = self.extract_team_info(event_url) or (("?", "?"), ("?", "?"))
-                    events.append(Event(event_id, event_url, dt_utc, *teams))
+                    away, home = self.extract_team_info(event_url) or (("?", "?"), ("?", "?"))
+                    selections = parse_spread_markets(event_id)
+                    events.append(Event(event_id, league, event_url, dt_utc, away, home, selections))
             except Exception as e:
                 self.log.warning(f"Error fetching {event_url}: {e}")
             await asyncio.sleep(0.5)
 
-        events.sort(key=lambda g: g.start_time_utc)
+        events.sort(key=lambda g: g.start_time)
         self.log.info(f"Total {len(events)} events for today.")
         return events
 
@@ -470,14 +441,15 @@ class WebsocketRunner:
         self.log = logging.getLogger(self.__class__.__name__)
         self.jwt = os.environ["DRAFTKINGS_WS_JWT"]
         self.url = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
+        self.local_tz = get_localzone()
 
     async def run(self, game: Event, output_dir: pathlib.Path, league: str) -> None:
         state = types.SimpleNamespace()
-        selections = parse_spread_markets(game.event_id)
-        logger.info(f"Found selections {selections} for Event({game})")
-        selection_ids = [x["selection_id"] for x in selections]
-        market_ids = [x["market_id"] for x in selections]
-        logger.info("Starting websocket runner for game %s in league %s", game, league)
+        self.log.info("Using selections %s for %s", game.selections, game)
+        selection_ids = [x["selection_id"] for x in game.selections]
+        market_ids = [x["market_id"] for x in game.selections]
+
+        self.log.info("Starting websocket runner for game %s in league %s", game, league)
         subscribe_payload = {
             "jsonrpc": "2.0",
             "params": {
@@ -503,39 +475,42 @@ class WebsocketRunner:
         }
         path = odds_filepath(output_dir, league, game.event_id)
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.log.info("Logging odds data for %s to %s", game, path)
         start = time.time()
         events = 0
         last_event_time = time.time()
 
         while True:
             if asyncio.current_task() and asyncio.current_task().cancelled():
-                self.log.info(f"Websocket runner for {game.event_id} cancelled, shutting down.")
+                self.log.info(f"Websocket runner for {game} cancelled, shutting down.")
                 break
 
             try:
                 self.log.info(f"Connecting websocket for {game}")
                 async with websockets.connect(self.url, max_size=None) as ws:
                     await ws.send(msgpack.packb(subscribe_payload))
-                    self.log.info(f"Subscribed to {game} League({league})")
+                    self.log.info(f"Subscribed to {game}")
 
                     with open(path, "a", encoding="utf-8") as writer:
                         while True:
-                            # Timeout if no events seen in 2 minutes
-                            if time.time() - last_event_time > 120:
-                                self.log.info(f"No events for 2 minutes; assuming game {game.event_id} has ended.")
+                            # Timeout if no events seen
+                            now_utc = dt.datetime.now(dt.timezone.utc)
+                            runtime = (now_utc - game.start_time).total_seconds() / 60
+                            events_per_game_min = events / runtime
+                            if time.time() - last_event_time > max_time_since_last_event:
+                                self.log.info(f"No events for 2 minutes; assuming {game} has ended.")
                                 return
 
                             if asyncio.current_task() and asyncio.current_task().cancelled():
-                                self.log.warning(f"Websocket runner for {game.event_id} cancelled mid-loop.")
+                                self.log.warning(f"Websocket runner for {game} cancelled mid-loop.")
                                 return
 
                             try:
                                 msg = await asyncio.wait_for(ws.recv(), timeout=10)
                             except asyncio.TimeoutError:
-                                # No message for 10s, check again
                                 continue
 
-                            logger.debug(f"Received bytes: {len(msg)}")
+                            self.log.debug(f"Received bytes: {len(msg)}")
 
                             try:
                                 hits = process_dk_frame(msg, game.event_id, state, selection_ids, market_ids)
@@ -543,9 +518,10 @@ class WebsocketRunner:
                                     last_event_time = time.time()  # reset idle timer
 
                                 events_per_second = events / (time.time() - start)
-                                if events % log_count == 0:
+                                worker_runtime = (time.time() - start) / 60.0
+                                if events % event_log_interval == 0:
                                     logging.info(
-                                        f"{CYAN}Processing:\t{events:,.0f} events\t\t{events_per_second:.1f} events/sec.\t\t\t{game}{RESET}"
+                                        f"{CYAN}{game}\t{worker_runtime:,.2f} worker mins.\t{runtime:,.0f} event mins.\t{events_per_game_min:,.2f} msgs/event min.\t\t{events:,.0f} msgs\t\t{events_per_second:.1f} msgs/sec.{RESET}"
                                     )
                                 events += 1
 
@@ -555,18 +531,18 @@ class WebsocketRunner:
                                     writer.write(change.to_json() + "\n")
                                     writer.flush()
                             except Exception as e:
-                                self.log.warning(f"Decode error ({game.event_id}): {e}")
+                                self.log.warning(f"Decode error ({game}): {e}")
 
             except (
                 websockets.exceptions.ConnectionClosedError,
                 websockets.exceptions.ConnectionClosedOK,
                 ConnectionResetError,
             ) as e:
-                self.log.warning(f"Websocket disconnected ({game.event_id}): {e}. Reconnecting in 3s...")
+                self.log.warning(f"Websocket disconnected ({game}): {e}. Reconnecting in 3s...")
                 await asyncio.sleep(3)
                 continue
             except Exception as e:
-                self.log.error(f"Unexpected Websocket error ({game.event_id}): {e}")
+                self.log.error(f"Unexpected Websocket error ({game}): {e}")
                 await asyncio.sleep(5)
 
 
@@ -574,27 +550,15 @@ class Monitor:
     def __init__(self, input_dir: pathlib.Path, concurrency: int = 10) -> None:
         self.input_dir = pathlib.Path(input_dir)
         self.output_dir = self.input_dir
-        logger.info("Monitor using input director at %s", input_dir)
         self.concurrency = concurrency
         self.runner = WebsocketRunner()
         self.log = logging.getLogger(self.__class__.__name__)
         self.active_tasks: dict[str, asyncio.Task] = {}
+        self.log.info("Monitor using input director at %s", input_dir)
 
     def _get_today_files(self) -> list[pathlib.Path]:
-        today = dt.datetime.now().strftime("%Y%m%d")  # Use local time
+        today = dt.datetime.now().strftime("%Y%m%d")
         return sorted(self.input_dir.glob(f"*-{today}.json"))
-
-    def load_events(self, file_path: pathlib.Path) -> tuple[str, list[Event]]:
-        league = file_path.stem.split("-")[0]
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        events = []
-        for e in data:
-            start_time_utc = dt.datetime.fromisoformat(e["start_time_utc"])
-            away = tuple(e["away"])
-            home = tuple(e["home"])
-            events.append(Event(e["event_id"], e["event_url"], start_time_utc, away, home))
-        return league, events
 
     async def run_once(self) -> None:
         files = self._get_today_files()
@@ -602,11 +566,11 @@ class Monitor:
             self.log.warning("No event files found for today.")
             return
         for file_path in files:
-            league, games = self.load_events(file_path)
-            logger.info(f"Found {len(games)} scraped games for league {league}.")
+            league, games = load_events(file_path)
+            self.log.info(f"Found {len(games)} scraped games for league {league}.")
             started = [g for g in games if g.has_started() and not g.is_finished()]
 
-            logger.info(f"Found {len(started)} live games for league {league}.")
+            self.log.info(f"Found {len(started)} live games for league {league}.")
 
             # cancel finished or outdated tasks
             for key in list(self.active_tasks):
@@ -624,7 +588,7 @@ class Monitor:
 
             # start new ones
             for game in started:
-                key = f"{league}:{game.event_id}"
+                key = game.get_key()
                 if key not in self.active_tasks:
                     self.log.info(f"Starting monitor for {game}")
                     task = asyncio.create_task(self.runner.run(game, self.output_dir, league))
@@ -646,7 +610,7 @@ async def main() -> None:
     monitor_p.add_argument(
         "--input-dir", required=True, type=pathlib.Path, help="Directory containing event JSON files"
     )
-    monitor_p.add_argument("--interval", type=int, default=60, help="Refresh interval in seconds")
+    monitor_p.add_argument("--interval", type=int, default=default_loop_interval, help="Refresh interval in seconds")
 
     args = parser.parse_args()
 
@@ -663,37 +627,6 @@ async def main() -> None:
                 logger.error(f"Cycle error: {e}")
             logger.info(f"Sleeping {args.interval}s before next cycle...")
             await asyncio.sleep(args.interval)
-
-
-import uuid
-import pytest
-import shutil
-
-
-@pytest.mark.asyncio
-async def test_scrape_and_save_all_writes_non_empty_games() -> None:
-    scraper = EventScraper()
-    base_dir = pathlib.Path("/tmp") / f"dk-event-monitor-test-{uuid.uuid4().hex}"
-    output_dir = base_dir / "data"
-    output_dir.mkdir(parents=True, exist_ok=False)
-
-    try:
-        paths = await scraper.scrape_and_save_all(output_dir)
-
-        assert paths, "Expected scrape to produce files"
-        for path in paths:
-            assert path.parent == output_dir
-            assert path.exists()
-            league = path.stem.split("-")[0]
-            with path.open("r", encoding="utf-8") as fp:
-                payload = json.load(fp)
-            assert isinstance(payload, list)
-            assert payload is not None, f"Expected events written for {league}"
-            for item in payload:
-                assert item["event_id"]
-                assert item["event_url"]
-    finally:
-        shutil.rmtree(base_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

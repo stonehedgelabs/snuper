@@ -21,7 +21,7 @@ options:
 #### Usage
 
 ```sh
-python main.py scrape --league nba --output-dir data/
+python dk.py scrape --league nba --output-dir data/
 ```
 
 
@@ -44,5 +44,5 @@ options:
 #### Usage
 
 ```sh
-python main.py monitor --input-dir data/ --interval 60
+python dk.py monitor --input-dir data/ --interval 60
 ```
