@@ -20,9 +20,7 @@ def _current_stamp(now: dt.datetime | None = None) -> str:
     return current.strftime(DATE_STAMP_FORMAT)
 
 
-def event_filepath(
-    output_dir: Path, league: str, *, timestamp: str | None = None
-) -> Path:
+def event_filepath(output_dir: Path, league: str, *, timestamp: str | None = None) -> Path:
     """Build the filesystem path for an event snapshot JSON file."""
 
     ts = timestamp or _current_stamp()
@@ -57,9 +55,7 @@ class BaseEventScraper(abc.ABC):
     async def scrape_today(self, league: str) -> list[Event]:
         """Return the list of events scheduled today for ``league``."""
 
-    def save(
-        self, events: Iterable[Event], league: str, output_dir: Path
-    ) -> Path | None:
+    def save(self, events: Iterable[Event], league: str, output_dir: Path) -> Path | None:
         """Persist scraped events to disk unless a prior snapshot exists."""
 
         output_dir = Path(output_dir)
@@ -92,9 +88,7 @@ class BaseEventScraper(abc.ABC):
 
             try:
                 events = await self.scrape_today(league)
-            except (
-                Exception
-            ) as exc:  # pragma: no cover - safety net for CLI usage
+            except Exception as exc:  # pragma: no cover - safety net for CLI usage
                 self.log.error("Failed to scrape %s: %s", league, exc)
                 continue
 

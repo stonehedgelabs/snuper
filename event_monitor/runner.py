@@ -43,10 +43,7 @@ class BaseRunner(abc.ABC):
     ) -> None:
         """Emit a heartbeat log if forced or the interval has elapsed."""
 
-        if force or (
-            self.heartbeat_interval
-            and time.time() - self._last_heartbeat >= self.heartbeat_interval
-        ):
+        if force or (self.heartbeat_interval and time.time() - self._last_heartbeat >= self.heartbeat_interval):
             self.emit_heartbeat(event, stats=stats or {})
             self._last_heartbeat = time.time()
 
@@ -74,11 +71,7 @@ class BaseMonitor:
         self.concurrency = concurrency
         self.log = logging.getLogger(self.__class__.__name__)
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
-        self._semaphore = (
-            asyncio.Semaphore(concurrency)
-            if concurrency and concurrency > 0
-            else None
-        )
+        self._semaphore = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
 
     def event_key(self, event: Event) -> str:
         """Build a unique key used to track active runner tasks."""
@@ -110,9 +103,7 @@ class BaseMonitor:
             if task.done():
                 exc = task.exception()
                 if exc:
-                    self.log.error(
-                        "Runner for %s raised %s", key, exc, exc_info=exc
-                    )
+                    self.log.error("Runner for %s raised %s", key, exc, exc_info=exc)
                 self.active_tasks.pop(key)
                 continue
 
@@ -124,7 +115,7 @@ class BaseMonitor:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-            self.active_tasks.pop(key, None)
+            await self.active_tasks.pop(key, None)
 
     async def _run_event(self, event: Event, league: str) -> None:
         """Execute runner logic for a single event, respecting throttling."""
@@ -170,19 +161,13 @@ class BaseMonitor:
         for file_path in files:
             try:
                 league, events = load_events(file_path)
-            except (
-                Exception
-            ) as exc:  # pragma: no cover - guard for runtime errors
+            except Exception as exc:  # pragma: no cover - guard for runtime errors
                 self.log.error("Failed to load %s: %s", file_path, exc)
                 continue
 
-            live_events = [
-                event for event in events if self.should_monitor(event)
-            ]
+            live_events = [event for event in events if self.should_monitor(event)]
             active_map[league] = {event.event_id for event in live_events}
-            self.log.info(
-                "Found %d live games for league %s.", len(live_events), league
-            )
+            self.log.info("Found %d live games for league %s.", len(live_events), league)
             for event in live_events:
                 to_start.append((league, event))
 

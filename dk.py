@@ -45,13 +45,57 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def sanitize_american_odds(value: Any) -> str | None:
+    """Return ASCII-only American odds without leading plus signs."""
+
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    replacements = {
+        "−": "-",
+        "–": "-",
+        "—": "-",
+        "﹣": "-",
+        "－": "-",
+        "＋": "+",
+        "⁺": "+",
+        "﹢": "+",
+    }
+    for src, dest in replacements.items():
+        text = text.replace(src, dest)
+
+    normalized = text.replace(" ", "")
+    lowered = normalized.lower()
+    if lowered == "even":
+        return "100"
+    if lowered in {"pk", "pick", "pick'em", "pickem"}:
+        return "0"
+
+    sign = ""
+    if normalized.startswith("-"):
+        sign = "-"
+        normalized = normalized[1:]
+    elif normalized.startswith("+"):
+        normalized = normalized[1:]
+
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    if not digits:
+        return None
+
+    return f"{sign}{digits}" if sign else digits
+
+
 def flatten_markets(data: dict) -> list:
     """Flatten DraftKings market payloads into per-selection dicts."""
 
     markets = data.get("markets", [])
     selections = data.get("selections", [])
     if not markets or not selections:
-        print("No markets or selections found")
+        logger.warning("No markets or selections found")
         return []
 
     market_map = {m["id"]: m for m in markets if "id" in m}
@@ -74,7 +118,7 @@ def flatten_markets(data: dict) -> list:
                 "market_name": market.get("name"),
                 "marketType": market_type,
                 "label": s.get("label"),
-                "odds_american": display_odds.get("american"),
+                "odds_american": sanitize_american_odds(display_odds.get("american")),
                 "odds_decimal": display_odds.get("decimal"),
                 "participant": participant_name,
             }
@@ -123,14 +167,11 @@ def parse_event_categories(event_id) -> list:
 def parse_spread_markets(event_id):
     """Filter markets down to spread selections for monitoring."""
     data = parse_event_categories(event_id)
-    spread_markets = [
-        x for x in data if x["marketType"] == DRAFTKINGS_SPREAD_MARKET_TYPE
-    ]
+    spread_markets = [x for x in data if x["marketType"] == DRAFTKINGS_SPREAD_MARKET_TYPE]
     return spread_markets
 
 
 def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
-    """Decode a websocket frame and return matching selection updates."""
 
     if not hasattr(state, "sel"):
         state.sel, state.hashes = {}, {}
@@ -179,18 +220,15 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
             if len(num) >= 7:
                 watched_mid_patterns.add(num.lower())
 
-    all_patterns = watched_sid_patterns | watched_mid_patterns
-    if all_patterns:
-        sample = msg_bytes[:2048] + (
-            msg_bytes[-2048:] if len(msg_bytes) > 2048 else b""
-        )
-        sample_str = sample.decode("utf-8", errors="ignore").lower()
-        if not any(pattern in sample_str for pattern in all_patterns):
-            return []
-
     try:
         decoded = msgpack.unpackb(msg_bytes, raw=False, timestamp=3)
-    except Exception:
+        # all_patterns = watched_sid_patterns | watched_mid_patterns
+        # if all_patterns:
+        #     decoded_str = json.dumps(decoded, default=str).lower()
+        #     if not any(p in decoded_str for p in all_patterns):
+        #         return []
+    except Exception as e:
+        logger.error("Failed to decode msg: %s", e)
         return []
 
     def iter_nodes(root):
@@ -198,19 +236,13 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         while stack:
             cur = stack.pop()
             if isinstance(cur, list):
-                if (
-                    len(cur) >= 2
-                    and isinstance(cur[0], int)
-                    and isinstance(cur[1], list)
-                ):
+                if len(cur) >= 2 and isinstance(cur[0], int) and isinstance(cur[1], list):
                     yield cur
                 for item in reversed(cur):
                     if isinstance(item, (list, dict)):
                         stack.append(item)
             elif isinstance(cur, dict):
-                stack.extend(
-                    v for v in cur.values() if isinstance(v, (list, dict))
-                )
+                stack.extend(v for v in cur.values() if isinstance(v, (list, dict)))
 
     def matches_watched_selection(sid):
         if not sid:
@@ -261,9 +293,7 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         # Determine match type (priority: exact selection > exact market > prefix)
         match_type = None
         if matches_watched_selection(sid):
-            match_type = (
-                f"exact:selection:{bet_type}" if bet_type else "exact:selection"
-            )
+            match_type = f"exact:selection:{bet_type}" if bet_type else "exact:selection"
         elif matches_watched_market(mid):
             match_type = "exact:market"
         elif bet_type:
@@ -273,10 +303,7 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
             continue
 
         prev = state.sel.get(sid, {})
-        merged = {
-            k: (item[k] if item.get(k) is not None else prev.get(k))
-            for k in hdr
-        }
+        merged = {k: (item[k] if item.get(k) is not None else prev.get(k)) for k in hdr}
         state.sel[sid] = merged
 
         oa = merged.get("odds_array") or []
@@ -289,6 +316,7 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
 
         if state.hashes.get(sid) == fp:
             continue
+
         state.hashes[sid] = fp
 
         mtags = merged.get("market_tags") or []
@@ -303,8 +331,7 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
                 "marketType": market_type,
                 "label": merged.get("label"),
                 "odds_american": oa[0] if oa else None,
-                "odds_decimal": (oa[1] if len(oa) > 1 else None)
-                or merged.get("odds_decimal"),
+                "odds_decimal": (oa[1] if len(oa) > 1 else None) or merged.get("odds_decimal"),
                 "spread_or_line": merged.get("spread_or_line"),
                 "bet_type": bet_type,
                 "participant": merged.get("label"),
@@ -328,9 +355,7 @@ class EventScraper(BaseEventScraper):
         )
         self.pattern_date = re.compile(r'"startEventDate":"([^"]+)"')
 
-    def extract_team_info(
-        self, event_url: str
-    ) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Derive away/home team tokens from a DraftKings event slug."""
         slug = urlparse(event_url).path.split("/event/")[-1].split("/")[0]
         slug = unquote(slug)
@@ -365,16 +390,10 @@ class EventScraper(BaseEventScraper):
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all(
-                "a[href]", "els => els.map(e => e.href)"
-            )
+            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
             await browser.close()
-        event_urls = sorted(
-            set(h for h in hrefs if self.pattern_event_url.match(h))
-        )
-        self.log.info(
-            f"Found {len(event_urls)} event URLs. Fetching metadata..."
-        )
+        event_urls = sorted(set(h for h in hrefs if self.pattern_event_url.match(h)))
+        self.log.info(f"Found {len(event_urls)} event URLs. Fetching metadata...")
 
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
         for event_url in event_urls:
@@ -384,9 +403,7 @@ class EventScraper(BaseEventScraper):
                 if not match:
                     continue
                 utc_str = match.group(1)
-                dt_utc = dt.datetime.fromisoformat(
-                    utc_str.replace("Z", "+00:00")
-                )
+                dt_utc = dt.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
                 dt_local = dt_utc.astimezone(self.local_tz)
                 if start_of_day <= dt_local < end_of_day:
                     event_id = event_url.split("/")[-1]
@@ -440,9 +457,7 @@ class SelectionChange:
 
     def to_json(self) -> str:
         """Serialise the selection change into a JSON string."""
-        return json.dumps(
-            {"created_at": self.created_at, "data": self.selection.to_dict()}
-        )
+        return json.dumps({"created_at": self.created_at, "data": self.selection.to_dict()})
 
 
 class WebsocketRunner(BaseRunner):
@@ -456,9 +471,7 @@ class WebsocketRunner(BaseRunner):
         self.url = DRAFTKINGS_WEBSOCKET_URL
         self.local_tz = get_localzone()
 
-    async def run(
-        self, game: Event, output_dir: pathlib.Path, league: str
-    ) -> None:
+    async def run(self, game: Event, output_dir: pathlib.Path, league: str) -> None:
         """Consume the websocket for ``game`` and append JSONL odds updates."""
 
         state = types.SimpleNamespace()
@@ -466,9 +479,7 @@ class WebsocketRunner(BaseRunner):
         selection_ids = [x["selection_id"] for x in game.selections]
         market_ids = [x["market_id"] for x in game.selections]
 
-        self.log.info(
-            "Starting websocket runner for game %s in league %s", game, league
-        )
+        self.log.info("Starting websocket runner for game %s in league %s", game, league)
         subscribe_payload = {
             "jsonrpc": "2.0",
             "params": {
@@ -497,6 +508,7 @@ class WebsocketRunner(BaseRunner):
         self.log.info("Logging odds data for %s to %s", game, path)
         start = time.time()
         events = 0
+        nhits = 0
         last_event_time = time.time()
         self.reset_heartbeat()
 
@@ -505,13 +517,12 @@ class WebsocketRunner(BaseRunner):
                 "start": start,
                 "events": events,
                 "event_start": game.start_time,
+                "hits": nhits,
             }
 
         while True:
             if asyncio.current_task() and asyncio.current_task().cancelled():
-                self.log.info(
-                    f"Websocket runner for {game} cancelled, shutting down."
-                )
+                self.log.info(f"Websocket runner for {game} cancelled, shutting down.")
                 break
 
             try:
@@ -522,32 +533,18 @@ class WebsocketRunner(BaseRunner):
 
                     with open(path, "a", encoding="utf-8") as writer:
                         while True:
-                            if (
-                                time.time() - last_event_time
-                                > DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT
-                            ):
-                                self.log.info(
-                                    f"No events for 2 minutes; assuming {game} has ended."
-                                )
+                            if time.time() - last_event_time > DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT:
+                                self.log.info(f"No events for 2 minutes; assuming {game} has ended.")
                                 return
 
-                            if (
-                                asyncio.current_task()
-                                and asyncio.current_task().cancelled()
-                            ):
-                                self.log.warning(
-                                    f"Websocket runner for {game} cancelled mid-loop."
-                                )
+                            if asyncio.current_task() and asyncio.current_task().cancelled():
+                                self.log.warning(f"Websocket runner for {game} cancelled mid-loop.")
                                 return
 
                             try:
-                                msg = await asyncio.wait_for(
-                                    ws.recv(), timeout=10
-                                )
+                                msg = await asyncio.wait_for(ws.recv(), timeout=10)
                             except asyncio.TimeoutError:
-                                self.maybe_emit_heartbeat(
-                                    game, stats=current_stats()
-                                )
+                                self.maybe_emit_heartbeat(game, stats=current_stats())
                                 continue
 
                             self.log.debug(f"Received bytes: {len(msg)}")
@@ -561,17 +558,13 @@ class WebsocketRunner(BaseRunner):
                                     market_ids,
                                 )
                                 if hits:
+                                    nhits += len(hits)
                                     last_event_time = time.time()
 
                                 events += 1
                                 stats = current_stats()
-                                if (
-                                    events % DRAFTKINGS_EVENT_LOG_INTERVAL == 0
-                                    and events > 0
-                                ):
-                                    self.maybe_emit_heartbeat(
-                                        game, force=True, stats=stats
-                                    )
+                                if events % DRAFTKINGS_EVENT_LOG_INTERVAL == 0 and events > 0:
+                                    self.maybe_emit_heartbeat(game, force=True, stats=stats)
 
                                 for hit in hits:
                                     sel = Selection(game.event_id, hit)
@@ -588,9 +581,7 @@ class WebsocketRunner(BaseRunner):
                 websockets.exceptions.ConnectionClosedOK,
                 ConnectionResetError,
             ) as e:
-                self.log.warning(
-                    f"Websocket disconnected ({game}): {e}. Reconnecting in 3s..."
-                )
+                self.log.warning(f"Websocket disconnected ({game}): {e}. Reconnecting in 3s...")
                 await asyncio.sleep(3)
                 continue
             except Exception as e:
@@ -610,32 +601,13 @@ class WebsocketRunner(BaseRunner):
         event_runtime = max((now_utc - event_start).total_seconds() / 60.0, 0.1)
         per_min = events / event_runtime if event_runtime else 0.0
         per_sec = events / max((now - start), 0.1)
+        hits = stats["hits"]
         self.log.info(
             f"{CYAN}{event}\t{worker_runtime:,.2f} worker mins."
             f"\t{event_runtime:,.0f} event mins."
             f"\t{per_min:,.2f} msgs/event min."
-            f"\t\t{events:,.0f} msgs"
-            f"\t\t{per_sec:.1f} msgs/sec.{RESET}"
-        )
-
-    def emit_heartbeat(self, event: Event, *, stats: dict[str, Any]) -> None:
-        """Log websocket throughput using shared formatting."""
-
-        start = stats.get("start", time.time())
-        events = stats.get("events", 0)
-        event_start: dt.datetime = stats.get("event_start", event.start_time)
-
-        now = time.time()
-        now_utc = dt.datetime.now(dt.timezone.utc)
-        worker_runtime = (now - start) / 60.0
-        event_runtime = max((now_utc - event_start).total_seconds() / 60.0, 0.1)
-        per_min = events / event_runtime if event_runtime else 0.0
-        per_sec = events / max(now - start, 0.1)
-        self.log.info(
-            f"{CYAN}{event}\t{worker_runtime:,.2f} worker mins."
-            f"\t{event_runtime:,.0f} event mins."
-            f"\t{per_min:,.2f} msgs/event min."
-            f"\t\t{events:,.0f} msgs"
+            f"\t{hits} hits"
+            f"\t{events:,.0f} msgs"
             f"\t\t{per_sec:.1f} msgs/sec.{RESET}"
         )
 
@@ -684,9 +656,7 @@ async def main() -> None:
         await scraper.scrape_and_save_all(args.output_dir)
     elif args.cmd == "monitor":
         monitor = Monitor(args.input_dir)
-        logger.info(
-            f"Starting persistent monitor (interval={args.interval}s)..."
-        )
+        logger.info(f"Starting persistent monitor (interval={args.interval}s)...")
         while True:
             try:
                 await monitor.run_once()
