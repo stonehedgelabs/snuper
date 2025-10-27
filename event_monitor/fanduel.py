@@ -1,13 +1,11 @@
 from __future__ import annotations
 import asyncio
-import argparse
 import datetime as dt
 import json
 import logging
 import os
 import re
 import time
-import t
 import pathlib
 from typing import Any, Optional
 from urllib.parse import urlparse, unquote
@@ -152,7 +150,9 @@ class EventScraper:
         )
         self.base_domain = "https://sportsbook.fanduel.com"
 
-    def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    def extract_team_info(
+        self, event_url: str
+    ) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Split a FanDuel slug into short and long team identifiers."""
         slug = urlparse(event_url).path.split("/")[-1]
         try:
@@ -230,16 +230,22 @@ class EventScraper:
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(locale="en-US", extra_http_headers=headers)
+            context = await browser.new_context(
+                locale="en-US", extra_http_headers=headers
+            )
             page = await context.new_page()
             await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
+            hrefs = await page.eval_on_selector_all(
+                "a[href]", "els => els.map(e => e.getAttribute('href'))"
+            )
             print(hrefs)
             await browser.close()
 
         # Filter for valid relative paths like /football/nfl/new-york-jets-@-cincinnati-bengals-34844525
-        event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
+        event_paths = sorted(
+            set(h for h in hrefs if h and self.pattern_event_path.match(h))
+        )
         event_urls = [self.base_domain + path for path in event_paths]
 
         self.log.info(f"Found {len(event_urls)} event URLs on {base_url}")
@@ -271,7 +277,9 @@ class EventScraper:
         self.log.info(f"Total {len(events)} events for today in {league.upper()}.")
         return events
 
-    def save(self, games: list[Event], league: str, output_dir: pathlib.Path) -> Optional[pathlib.Path]:
+    def save(
+        self, games: list[Event], league: str, output_dir: pathlib.Path
+    ) -> Optional[pathlib.Path]:
         """Persist the scraped events unless a snapshot already exists."""
         if not games:
             self.log.warning(f"No games to save for {league} today.")
@@ -323,29 +331,15 @@ class Monitor:
         raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
 
 
-async def main() -> None:
-    """CLI entrypoint for scraping or monitoring FanDuel events."""
-    parser = argparse.ArgumentParser(description="FanDuel Event Monitor")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+async def run_scrape(output_dir: pathlib.Path) -> None:
+    """Invoke the FanDuel scraper with the provided destination."""
 
-    scrape_p = sub.add_parser("scrape", help="Scrape today's events from FanDuel")
-    scrape_p.add_argument("-o", "--output-dir", required=True, type=pathlib.Path)
-
-    monitor_p = sub.add_parser("monitor", help="Monitor live FanDuel events")
-    monitor_p.add_argument("--input-dir", required=True, type=pathlib.Path)
-
-    args = parser.parse_args()
-
-    if args.cmd == "scrape":
-        scraper = EventScraper()
-        await scraper.scrape_and_save_all(args.output_dir)
-    elif args.cmd == "monitor":
-        monitor = Monitor(args.input_dir)
-        await monitor.run_once()
+    scraper = EventScraper()
+    await scraper.scrape_and_save_all(output_dir)
 
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully.")
+async def run_monitor(input_dir: pathlib.Path) -> None:
+    """Execute the placeholder FanDuel monitor."""
+
+    monitor = Monitor(input_dir)
+    await monitor.run_once()

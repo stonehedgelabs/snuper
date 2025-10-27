@@ -43,7 +43,10 @@ class BaseRunner(abc.ABC):
     ) -> None:
         """Emit a heartbeat log if forced or the interval has elapsed."""
 
-        if force or (self.heartbeat_interval and time.time() - self._last_heartbeat >= self.heartbeat_interval):
+        if force or (
+            self.heartbeat_interval
+            and time.time() - self._last_heartbeat >= self.heartbeat_interval
+        ):
             self.emit_heartbeat(event, stats=stats or {})
             self._last_heartbeat = time.time()
 
@@ -71,7 +74,9 @@ class BaseMonitor:
         self.concurrency = concurrency
         self.log = logging.getLogger(self.__class__.__name__)
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
-        self._semaphore = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
+        self._semaphore = (
+            asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
+        )
 
     def event_key(self, event: Event) -> str:
         """Build a unique key used to track active runner tasks."""
@@ -167,7 +172,9 @@ class BaseMonitor:
 
             live_events = [event for event in events if self.should_monitor(event)]
             active_map[league] = {event.event_id for event in live_events}
-            self.log.info("Found %d live games for league %s.", len(live_events), league)
+            self.log.info(
+                "Found %d live games for league %s.", len(live_events), league
+            )
             for event in live_events:
                 to_start.append((league, event))
 

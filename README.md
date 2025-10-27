@@ -1,29 +1,54 @@
-# dk_event_monitor
+# event_monitor
 
 Asynchronous tooling for collecting sportsbook events, persisting snapshots, and
 streaming live odds updates. Each processor contributes a `scrape` command that
 captures the day’s schedule and a `monitor` command that streams odds into
 timestamped JSONL logs.
 
+## Usage
+
+```text
+usage: main.py [-h] [-p {betmgm,draftkings,fanduel}] -t {scrape,monitor}
+               [-o OUTPUT_DIR] [-i INTERVAL]
+
+Unified Event Monitor CLI
+
+options:
+  -h, --help            show this help message and exit
+  -p {betmgm,draftkings,fanduel}, --provider {betmgm,draftkings,fanduel}
+                        Target sportsbook provider (omit to run all)
+  -t {scrape,monitor}, -task {scrape,monitor}, --task {scrape,monitor}
+                        Operation to perform
+  -o OUTPUT_DIR, --output-dir OUTPUT_DIR
+                        Base directory where provider artifacts are written
+  -i INTERVAL, --interval INTERVAL
+                        Refresh interval in seconds (DraftKings monitor only)
+```
+
+Skip `--provider` to execute every processor in sequence. The CLI accepts both
+short aliases (`dk`, `fd`) and full names (`draftkings`, `betmgm`, `fanduel`).
+
 ## DraftKings Processor (Websocket)
 
-- `python dk.py scrape --league nba --output-dir data/draftkings/events` —
-  launches Playwright, enumerates event URLs, normalises spread markets, and
+- `python main.py --provider draftkings --task scrape --output-dir data`
+  — launches Playwright, enumerates event URLs, normalises spread markets, and
   persists `nba-YYYYMMDD.json` snapshots.
-- `python dk.py monitor --input-dir data/draftkings/events --interval 30`
-  consumes the websocket feed using the selections saved in the snapshot.
+- `python main.py --provider draftkings --task monitor --output-dir data --interval 30`
+  — consumes the websocket feed using the selections saved in the snapshot.
   Heartbeats are emitted even when a game is idle so every in-flight event logs
   progress (no more silent NBA sessions).
 - Snapshots live under `data/draftkings/events/`, odds streams land in
-  `data/draftkings/events/odds/`. Each reconnect reuses the subscription
+`data/draftkings/events/odds/`. Each reconnect reuses the subscription
   payload and the base runner ensures only one websocket is opened per game.
 
 ## MGM Processor (Playwright Polling)
 
-- `python mgm.py scrape --league nba --output-dir data/mgm/events` navigates the
-  BetMGM league pages, filters to today’s games, and stores their metadata.
-- `python mgm.py monitor --input-dir data/mgm/events` reloads each event page on
-  a short cadence and flattens spread/total/moneyline rows into JSONL records.
+- `python main.py --provider betmgm --task scrape --output-dir data`
+  — navigates the BetMGM league pages, filters to today’s games, and stores
+  their metadata.
+- `python main.py --provider betmgm --task monitor --output-dir data`
+  — reloads each event page on a short cadence and flattens
+  spread/total/moneyline rows into JSONL records.
   The shared runner logic emits a heartbeat once per minute so you can see NBA
   and NFL games even when the DOM hasn’t changed.
 - Odds logs are appended beneath the same directory structure as DraftKings to
@@ -31,9 +56,13 @@ timestamped JSONL logs.
 
 ## FanDuel Processor (WIP)
 
-- `fd.py` mirrors the scraper API but market normalisation and live polling are
-  still stubbed out. Once the API responses are recorded, it can be wired into
-  the same runner infrastructure without altering downstream consumers.
+- `python main.py --provider fanduel --task scrape --output-dir data`
+  — mirrors the scraper API but market normalisation and live polling are still
+  stubbed out.
+- `python main.py --provider fanduel --task monitor --output-dir data`
+  — currently raises `NotImplementedError` until live polling is implemented. Once
+  market responses are recorded, it can be wired into the shared runner without
+  impacting downstream consumers.
 
 ## Shared Architecture
 

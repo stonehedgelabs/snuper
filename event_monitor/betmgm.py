@@ -1,10 +1,10 @@
 from __future__ import annotations
 import asyncio
-import argparse
 import datetime as dt
 import json
 import logging
 import os
+import zoneinfo
 import re
 import time
 import pathlib
@@ -16,7 +16,7 @@ from playwright.async_api import async_playwright
 from tzlocal import get_localzone
 
 from event_monitor.constants import (
-    CYAN,
+    YELLOW,
     RED,
     RESET,
     MGM_DEFAULT_MONITOR_INTERVAL,
@@ -53,10 +53,6 @@ class EventScraper(BaseEventScraper):
 
     async def extract_start_time(self, page):
         """Parse the BetMGM DOM to determine the event's UTC start time."""
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
-        from tzlocal import get_localzone
-
         try:
             # Wait for both elements to appear
             await page.wait_for_selector(
@@ -94,35 +90,40 @@ class EventScraper(BaseEventScraper):
             if not date_text or not time_text:
                 raise ValueError("Missing date or time text")
 
-            local_tz = get_localzone()
-            now_local = datetime.now(local_tz)
+            # BetMGM shows times in UTC to Playwright, so we interpret as UTC
+            utc_tz = zoneinfo.ZoneInfo("UTC")
+            now_utc = dt.datetime.now(utc_tz)
 
-            # Interpret the date string
+            # Interpret the date string (relative to UTC "now")
+            event_date = None
             if date_text.lower() == "today":
-                event_date = now_local.date()
+                event_date = now_utc.date()
             elif date_text.lower() == "tomorrow":
-                event_date = (now_local + timedelta(days=1)).date()
+                event_date = (now_utc + dt.timedelta(days=1)).date()
             elif "/" in date_text:
                 try:
-                    event_date = datetime.strptime(date_text, "%m/%d/%y").date()
+                    event_date = dt.datetime.strptime(date_text, "%m/%d/%y").date()
                 except ValueError:
-                    event_date = datetime.strptime(date_text, "%m/%d/%Y").date()
+                    event_date = dt.datetime.strptime(date_text, "%m/%d/%Y").date()
             else:
                 for fmt in ("%a %d %b", "%b %d", "%a, %b %d"):
                     try:
-                        event_date = datetime.strptime(date_text, fmt).replace(year=now_local.year).date()
+                        event_date = (
+                            dt.datetime.strptime(date_text, fmt)
+                            .replace(year=now_utc.year)
+                            .date()
+                        )
                         break
                     except ValueError:
                         continue
                 else:
                     raise ValueError(f"Unrecognized date format: {date_text}")
 
-            # Parse time (e.g. "7:30 PM")
-            event_time = datetime.strptime(time_text, "%I:%M %p").time()
+            # Parse time (e.g. "12:08 AM")
+            event_time = dt.datetime.strptime(time_text, "%I:%M %p").time()
 
-            # Combine into local datetime and convert to UTC
-            local_dt = datetime.combine(event_date, event_time, tzinfo=local_tz)
-            utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
+            # Combine into UTC datetime (since page shows UTC times)
+            utc_dt = dt.datetime.combine(event_date, event_time, tzinfo=utc_tz)
 
             self.log.info(f"Converted MGM time to UTC: {utc_dt}")
             return utc_dt
@@ -136,7 +137,9 @@ class EventScraper(BaseEventScraper):
         url_lower = event_url.lower()
         return any(team in url_lower for team in MGM_NBA_TEAMS)
 
-    def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    def extract_team_info(
+        self, event_url: str
+    ) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Split the MGM slug into (away, home) team tokens."""
         slug = urlparse(event_url).path.split("/")[-1]
 
@@ -171,7 +174,9 @@ class EventScraper(BaseEventScraper):
         if not base_url:
             raise ValueError(f"Unsupported league: {league}")
 
-        self.log.info(f"Detected local timezone: {self.local_tz}")
+        self.log.info(
+            f"Scraping league '{league}', detected local timezone: {self.local_tz}"
+        )
         events: list[Event] = []
 
         headers = {
@@ -187,15 +192,23 @@ class EventScraper(BaseEventScraper):
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(locale="en-US", extra_http_headers=headers)
+            context = await browser.new_context(
+                locale="en-US",
+                timezone_id="America/Los_Angeles",
+                extra_http_headers=headers,
+            )
             page = await context.new_page()
 
             self.log.info(f"Navigating to {base_url}")
             await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
+            hrefs = await page.eval_on_selector_all(
+                "a[href]", "els => els.map(e => e.getAttribute('href'))"
+            )
 
-            event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
+            event_paths = sorted(
+                set(h for h in hrefs if h and self.pattern_event_path.match(h))
+            )
             event_urls = [self.base_domain + path for path in event_paths]
             if league == "nba":
                 event_urls = list(filter(lambda x: self._is_nba_game(x), event_urls))
@@ -209,7 +222,9 @@ class EventScraper(BaseEventScraper):
             for event_url in event_urls:
                 try:
                     self.log.info(f"Navigating to event: {event_url}")
-                    await page.goto(event_url, wait_until="domcontentloaded", timeout=45000)
+                    await page.goto(
+                        event_url, wait_until="domcontentloaded", timeout=45000
+                    )
                     await page.wait_for_timeout(2000)
 
                     start_time = await self.extract_start_time(page)
@@ -225,11 +240,15 @@ class EventScraper(BaseEventScraper):
                     # Filter: only include games starting today (in local timezone)
                     if not (today_start <= start_time_local < today_end):
                         local_str = start_time_local.strftime("%Y-%m-%d %I:%M %p %Z")
-                        self.log.info(f"Skipping event {event_url} - not starting today (starts {local_str})")
+                        self.log.info(
+                            f"Skipping event {event_url} - not starting today (starts {local_str})"
+                        )
                         continue
 
                     local_str = start_time_local.strftime("%Y-%m-%d %I:%M %p %Z")
-                    self.log.info(f"Extracted start time for {event_url}: {start_time} ({local_str})")
+                    self.log.info(
+                        f"Extracted start time for {event_url}: {start_time} ({local_str})"
+                    )
 
                     event_id = event_url.split("-")[-1]
                     away, home = self.extract_team_info(event_url) or (
@@ -259,7 +278,9 @@ class EventScraper(BaseEventScraper):
         return events
 
 
-def transform_markets_to_records(event_id: str, league: str, timestamp: str, markets: list[dict]) -> list[dict]:
+def transform_markets_to_records(
+    event_id: str, timestamp: str, markets: list[dict]
+) -> list[dict]:
     """Flatten scraped market rows into JSONL selection records."""
     records = []
     for m in markets:
@@ -311,7 +332,7 @@ class PollingRunner(BaseRunner):
 
     def __init__(self) -> None:
         """Set defaults for polling cadence and logging intervals."""
-        super().__init__()
+        super().__init__(heartbeat_interval=MGM_HEARTBEAT_SECONDS)
         self.loop_interval = MGM_DEFAULT_MONITOR_INTERVAL
         self.event_log_interval = MGM_EVENT_LOG_INTERVAL
         self.max_idle_seconds = MGM_MAX_IDLE_SECONDS
@@ -407,7 +428,9 @@ class PollingRunner(BaseRunner):
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(locale="en-US", extra_http_headers=headers)
+            context = await browser.new_context(
+                locale="en-US", extra_http_headers=headers
+            )
             page = await context.new_page()
             await page.goto(event.url, wait_until="domcontentloaded", timeout=60000)
 
@@ -416,8 +439,13 @@ class PollingRunner(BaseRunner):
             with open(output_file, "a") as f:
                 while True:
                     try:
-                        if asyncio.current_task() and asyncio.current_task().cancelled():
-                            self.log.info(f"Runner for {event} cancelled, shutting down.")
+                        if (
+                            asyncio.current_task()
+                            and asyncio.current_task().cancelled()
+                        ):
+                            self.log.info(
+                                f"Runner for {event} cancelled, shutting down."
+                            )
                             break
 
                         await page.reload(wait_until="domcontentloaded", timeout=30000)
@@ -425,7 +453,9 @@ class PollingRunner(BaseRunner):
                         timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
 
                         if markets:
-                            records = transform_markets_to_records(event_id, league, timestamp, markets)
+                            records = transform_markets_to_records(
+                                event_id, timestamp, markets
+                            )
                             for rec in records:
                                 hits += 1
                                 f.write(json.dumps(rec) + "\n")
@@ -434,11 +464,16 @@ class PollingRunner(BaseRunner):
                             event_count += 1
 
                         stats = current_stats()
-                        if event_count % self.event_log_interval == 0 and event_count > 0:
+                        if (
+                            event_count % self.event_log_interval == 0
+                            and event_count > 0
+                        ):
                             self.maybe_emit_heartbeat(event, force=True, stats=stats)
 
                         if time.time() - last_event_time > self.max_idle_seconds:
-                            self.log.info(f"No updates for 2 minutes; assuming {event} has ended.")
+                            self.log.info(
+                                f"No updates for 2 minutes; assuming {event} has ended."
+                            )
                             self.maybe_emit_heartbeat(event, force=True, stats=stats)
                             break
 
@@ -449,6 +484,13 @@ class PollingRunner(BaseRunner):
                         self.log.warning(f"Error monitoring {event}: {e}")
                         self.maybe_emit_heartbeat(event, stats=current_stats())
                         await asyncio.sleep(self.loop_interval)
+
+                        if time.time() - last_event_time > self.max_idle_seconds:
+                            self.log.info(
+                                f"No updates for 2 minutes; assuming {event} has ended."
+                            )
+                            self.maybe_emit_heartbeat(event, force=True, stats=stats)
+                            break
 
             await browser.close()
             self.log.info(f"Stopped monitor for {event}")
@@ -468,7 +510,7 @@ class PollingRunner(BaseRunner):
         per_sec = event_count / max((now - start_wall), 0.1)
         hits = stats["hits"]
         self.log.info(
-            f"{CYAN}{event}\t\t{worker_runtime:,.2f} worker mins."
+            f"{YELLOW}{event}\t\t{worker_runtime:,.2f} worker mins."
             f"\t{event_runtime:,.0f} event mins."
             f"\t{per_min:,.2f} msgs/min."
             f"\t{hits} hits"
@@ -486,36 +528,20 @@ class Monitor(BaseMonitor):
         self.log.info("Monitor using input directory at %s", self.input_dir)
 
 
-async def main() -> None:
-    """CLI entrypoint for scraping or monitoring BetMGM markets."""
-    parser = argparse.ArgumentParser(description="MGM Event Monitor")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+async def run_scrape(output_dir: pathlib.Path) -> None:
+    """Invoke the BetMGM scraper with the supplied destination."""
 
-    scrape_p = sub.add_parser("scrape", help="Scrape today's events from MGM")
-    scrape_p.add_argument("-o", "--output-dir", required=True, type=pathlib.Path)
-
-    monitor_p = sub.add_parser("monitor", help="Monitor live MGM events")
-    monitor_p.add_argument("--input-dir", required=True, type=pathlib.Path)
-
-    args = parser.parse_args()
-
-    if args.cmd == "scrape":
-        scraper = EventScraper()
-        await scraper.scrape_and_save_all(args.output_dir)
-
-    elif args.cmd == "monitor":
-        monitor = Monitor(args.input_dir)
-        logger.info("Starting monitors for today's events...")
-        await monitor.run_once()  # start all event runners
-        logger.info("All monitors started. Running indefinitely...")
-
-        # Keep process alive (monitors handle their own loop)
-        while True:
-            await asyncio.sleep(3600)
+    scraper = EventScraper()
+    await scraper.scrape_and_save_all(output_dir)
 
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully.")
+async def run_monitor(input_dir: pathlib.Path) -> None:
+    """Start BetMGM monitors using existing snapshot files."""
+
+    monitor = Monitor(input_dir)
+    logger.info("Starting monitors for today's events...")
+    await monitor.run_once()
+    logger.info("All monitors started. Running indefinitely...")
+
+    while True:
+        await asyncio.sleep(3600)

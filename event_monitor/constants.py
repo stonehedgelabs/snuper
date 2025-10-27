@@ -7,6 +7,9 @@ CYAN = "\033[96m"
 RED = "\033[91m"
 """ANSI escape code for red log output."""
 
+YELLOW = "\033[93m"
+"""ANSI escape code for yellow log output."""
+
 RESET = "\033[0m"
 """ANSI escape code that resets color formatting."""
 
@@ -23,7 +26,9 @@ GAME_RUNTIME_SECONDS = 5 * 3600
 """Default event duration used to determine when games expire."""
 
 # DraftKings configuration
-DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
+DRAFTKINGS_WEBSOCKET_URL = (
+    "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
+)
 """Primary DraftKings websocket endpoint for odds streaming."""
 
 DRAFTKINGS_SPREAD_MARKET_TYPE = "Spread"

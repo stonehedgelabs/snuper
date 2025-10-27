@@ -20,11 +20,13 @@ def _current_stamp(now: dt.datetime | None = None) -> str:
     return current.strftime(DATE_STAMP_FORMAT)
 
 
-def event_filepath(output_dir: Path, league: str, *, timestamp: str | None = None) -> Path:
+def event_filepath(
+    output_dir: Path, league: str, *, timestamp: str | None = None
+) -> Path:
     """Build the filesystem path for an event snapshot JSON file."""
 
     ts = timestamp or _current_stamp()
-    return Path(output_dir) / "events" / f"{league}-{ts}.json"
+    return Path(output_dir) / "events" / f"{ts}-{league}.json"
 
 
 def odds_filepath(
@@ -37,7 +39,7 @@ def odds_filepath(
     """Build the filesystem path for an odds stream JSONL log."""
 
     ts = timestamp or _current_stamp()
-    return Path(output_dir) / "odds" / f"{league}-{ts}-{event_id}.json"
+    return Path(output_dir) / "odds" / f"{ts}-{league}-{event_id}.json"
 
 
 class BaseEventScraper(abc.ABC):
@@ -55,7 +57,9 @@ class BaseEventScraper(abc.ABC):
     async def scrape_today(self, league: str) -> list[Event]:
         """Return the list of events scheduled today for ``league``."""
 
-    def save(self, events: Iterable[Event], league: str, output_dir: Path) -> Path | None:
+    def save(
+        self, events: Iterable[Event], league: str, output_dir: Path
+    ) -> Path | None:
         """Persist scraped events to disk unless a prior snapshot exists."""
 
         output_dir = Path(output_dir)

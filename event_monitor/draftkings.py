@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import asyncio
-import argparse
 import datetime as dt
 import json
 import logging
@@ -167,7 +166,9 @@ def parse_event_categories(event_id) -> list:
 def parse_spread_markets(event_id):
     """Filter markets down to spread selections for monitoring."""
     data = parse_event_categories(event_id)
-    spread_markets = [x for x in data if x["marketType"] == DRAFTKINGS_SPREAD_MARKET_TYPE]
+    spread_markets = [
+        x for x in data if x["marketType"] == DRAFTKINGS_SPREAD_MARKET_TYPE
+    ]
     return spread_markets
 
 
@@ -222,11 +223,6 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
 
     try:
         decoded = msgpack.unpackb(msg_bytes, raw=False, timestamp=3)
-        # all_patterns = watched_sid_patterns | watched_mid_patterns
-        # if all_patterns:
-        #     decoded_str = json.dumps(decoded, default=str).lower()
-        #     if not any(p in decoded_str for p in all_patterns):
-        #         return []
     except Exception as e:
         logger.error("Failed to decode msg: %s", e)
         return []
@@ -236,7 +232,11 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         while stack:
             cur = stack.pop()
             if isinstance(cur, list):
-                if len(cur) >= 2 and isinstance(cur[0], int) and isinstance(cur[1], list):
+                if (
+                    len(cur) >= 2
+                    and isinstance(cur[0], int)
+                    and isinstance(cur[1], list)
+                ):
                     yield cur
                 for item in reversed(cur):
                     if isinstance(item, (list, dict)):
@@ -293,7 +293,9 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         # Determine match type (priority: exact selection > exact market > prefix)
         match_type = None
         if matches_watched_selection(sid):
-            match_type = f"exact:selection:{bet_type}" if bet_type else "exact:selection"
+            match_type = (
+                f"exact:selection:{bet_type}" if bet_type else "exact:selection"
+            )
         elif matches_watched_market(mid):
             match_type = "exact:market"
         elif bet_type:
@@ -331,7 +333,8 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
                 "marketType": market_type,
                 "label": merged.get("label"),
                 "odds_american": oa[0] if oa else None,
-                "odds_decimal": (oa[1] if len(oa) > 1 else None) or merged.get("odds_decimal"),
+                "odds_decimal": (oa[1] if len(oa) > 1 else None)
+                or merged.get("odds_decimal"),
                 "spread_or_line": merged.get("spread_or_line"),
                 "bet_type": bet_type,
                 "participant": merged.get("label"),
@@ -355,7 +358,9 @@ class EventScraper(BaseEventScraper):
         )
         self.pattern_date = re.compile(r'"startEventDate":"([^"]+)"')
 
-    def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    def extract_team_info(
+        self, event_url: str
+    ) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Derive away/home team tokens from a DraftKings event slug."""
         slug = urlparse(event_url).path.split("/event/")[-1].split("/")[0]
         slug = unquote(slug)
@@ -378,7 +383,9 @@ class EventScraper(BaseEventScraper):
     async def scrape_today(self, league: str) -> list[Event]:
         """Collect today's events for the league and attach spread markets."""
         url = DRAFTKINGS_LEAGUE_URLS[league]
-        self.log.info(f"Detected local timezone: {self.local_tz}")
+        self.log.info(
+            f"Scraping league '{league}', detected local timezone: {self.local_tz}"
+        )
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + dt.timedelta(days=1)
@@ -390,7 +397,9 @@ class EventScraper(BaseEventScraper):
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
+            hrefs = await page.eval_on_selector_all(
+                "a[href]", "els => els.map(e => e.href)"
+            )
             await browser.close()
         event_urls = sorted(set(h for h in hrefs if self.pattern_event_url.match(h)))
         self.log.info(f"Found {len(event_urls)} event URLs. Fetching metadata...")
@@ -457,7 +466,9 @@ class SelectionChange:
 
     def to_json(self) -> str:
         """Serialise the selection change into a JSON string."""
-        return json.dumps({"created_at": self.created_at, "data": self.selection.to_dict()})
+        return json.dumps(
+            {"created_at": self.created_at, "data": self.selection.to_dict()}
+        )
 
 
 class WebsocketRunner(BaseRunner):
@@ -479,7 +490,9 @@ class WebsocketRunner(BaseRunner):
         selection_ids = [x["selection_id"] for x in game.selections]
         market_ids = [x["market_id"] for x in game.selections]
 
-        self.log.info("Starting websocket runner for game %s in league %s", game, league)
+        self.log.info(
+            "Starting websocket runner for game %s in league %s", game, league
+        )
         subscribe_payload = {
             "jsonrpc": "2.0",
             "params": {
@@ -533,12 +546,22 @@ class WebsocketRunner(BaseRunner):
 
                     with open(path, "a", encoding="utf-8") as writer:
                         while True:
-                            if time.time() - last_event_time > DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT:
-                                self.log.info(f"No events for 2 minutes; assuming {game} has ended.")
+                            if (
+                                time.time() - last_event_time
+                                > DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT
+                            ):
+                                self.log.info(
+                                    f"No events for 2 minutes; assuming {game} has ended."
+                                )
                                 return
 
-                            if asyncio.current_task() and asyncio.current_task().cancelled():
-                                self.log.warning(f"Websocket runner for {game} cancelled mid-loop.")
+                            if (
+                                asyncio.current_task()
+                                and asyncio.current_task().cancelled()
+                            ):
+                                self.log.warning(
+                                    f"Websocket runner for {game} cancelled mid-loop."
+                                )
                                 return
 
                             try:
@@ -563,8 +586,13 @@ class WebsocketRunner(BaseRunner):
 
                                 events += 1
                                 stats = current_stats()
-                                if events % DRAFTKINGS_EVENT_LOG_INTERVAL == 0 and events > 0:
-                                    self.maybe_emit_heartbeat(game, force=True, stats=stats)
+                                if (
+                                    events % DRAFTKINGS_EVENT_LOG_INTERVAL == 0
+                                    and events > 0
+                                ):
+                                    self.maybe_emit_heartbeat(
+                                        game, force=True, stats=stats
+                                    )
 
                                 for hit in hits:
                                     sel = Selection(game.event_id, hit)
@@ -581,7 +609,9 @@ class WebsocketRunner(BaseRunner):
                 websockets.exceptions.ConnectionClosedOK,
                 ConnectionResetError,
             ) as e:
-                self.log.warning(f"Websocket disconnected ({game}): {e}. Reconnecting in 3s...")
+                self.log.warning(
+                    f"Websocket disconnected ({game}): {e}. Reconnecting in 3s..."
+                )
                 await asyncio.sleep(3)
                 continue
             except Exception as e:
@@ -621,53 +651,24 @@ class Monitor(BaseMonitor):
         self.log.info("Monitor using input directory at %s", self.input_dir)
 
 
-async def main() -> None:
-    """CLI entrypoint for scraping or monitoring DraftKings data."""
-    parser = argparse.ArgumentParser(description="DraftKings Event Monitor")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+async def run_scrape(output_dir: pathlib.Path) -> None:
+    """Invoke the DraftKings scraper with the provided destination."""
 
-    scrape_p = sub.add_parser("scrape", help="Scrape today's events")
-    scrape_p.add_argument(
-        "-o",
-        "--output-dir",
-        required=True,
-        type=pathlib.Path,
-        help="Output directory for the JSON file",
-    )
-
-    monitor_p = sub.add_parser("monitor", help="Monitor live events")
-    monitor_p.add_argument(
-        "--input-dir",
-        required=True,
-        type=pathlib.Path,
-        help="Directory containing event JSON files",
-    )
-    monitor_p.add_argument(
-        "--interval",
-        type=int,
-        default=DRAFTKINGS_DEFAULT_MONITOR_INTERVAL,
-        help="Refresh interval in seconds",
-    )
-
-    args = parser.parse_args()
-
-    if args.cmd == "scrape":
-        scraper = EventScraper()
-        await scraper.scrape_and_save_all(args.output_dir)
-    elif args.cmd == "monitor":
-        monitor = Monitor(args.input_dir)
-        logger.info(f"Starting persistent monitor (interval={args.interval}s)...")
-        while True:
-            try:
-                await monitor.run_once()
-            except Exception as e:
-                logger.error(f"Cycle error: {e}")
-            logger.info(f"Sleeping {args.interval}s before next cycle...")
-            await asyncio.sleep(args.interval)
+    scraper = EventScraper()
+    await scraper.scrape_and_save_all(output_dir)
 
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully.")
+async def run_monitor(
+    input_dir: pathlib.Path, *, interval: int = DRAFTKINGS_DEFAULT_MONITOR_INTERVAL
+) -> None:
+    """Execute the DraftKings monitor loop with the configured interval."""
+
+    monitor = Monitor(input_dir)
+    logger.info("Starting persistent monitor (interval=%ss)...", interval)
+    while True:
+        try:
+            await monitor.run_once()
+        except Exception as exc:
+            logger.error("Cycle error: %s", exc)
+        logger.info("Sleeping %ss before next cycle...", interval)
+        await asyncio.sleep(interval)
