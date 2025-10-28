@@ -20,22 +20,24 @@ from event_monitor.constants import (
     RED,
     RESET,
     MGM_DEFAULT_MONITOR_INTERVAL,
+    MGM_MONITOR_SWEEP_INTERVAL,
     MGM_EVENT_LOG_INTERVAL,
     MGM_LEAGUE_URLS,
-    MGM_MAX_IDLE_SECONDS,
+    MAX_IDLE_SECONDS,
     MGM_HEARTBEAT_SECONDS,
     MGM_NBA_TEAMS,
+    MAX_RUNNER_ERRORS,
 )
 from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, odds_filepath
 from event_monitor.t import Event
-from event_monitor.utils import decimal_to_american
+from event_monitor.utils import configure_colored_logger, decimal_to_american
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(lineno)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] [%(lineno)s]: %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = configure_colored_logger(__name__, YELLOW)
 
 
 class EventScraper(BaseEventScraper):
@@ -85,7 +87,7 @@ class EventScraper(BaseEventScraper):
             date_text = date_time_texts.get("date")
             time_text = date_time_texts.get("time")
 
-            self.log.info(f"MGM extracted date='{date_text}', time='{time_text}'")
+            self.log.info("%s - MGM extracted date='%s', time='%s'", self.__class__.__name__, date_text, time_text)
 
             if not date_text or not time_text:
                 raise ValueError("Missing date or time text")
@@ -108,11 +110,7 @@ class EventScraper(BaseEventScraper):
             else:
                 for fmt in ("%a %d %b", "%b %d", "%a, %b %d"):
                     try:
-                        event_date = (
-                            dt.datetime.strptime(date_text, fmt)
-                            .replace(year=now_utc.year)
-                            .date()
-                        )
+                        event_date = dt.datetime.strptime(date_text, fmt).replace(year=now_utc.year).date()
                         break
                     except ValueError:
                         continue
@@ -125,11 +123,11 @@ class EventScraper(BaseEventScraper):
             # Combine into UTC datetime (since page shows UTC times)
             utc_dt = dt.datetime.combine(event_date, event_time, tzinfo=utc_tz)
 
-            self.log.info(f"Converted MGM time to UTC: {utc_dt}")
+            self.log.info("%s - converted MGM time to UTC: %s", self.__class__.__name__, utc_dt)
             return utc_dt
 
         except Exception as e:
-            self.log.warning(f"Could not extract MGM start time: {e}")
+            self.log.warning("%s - could not extract MGM start time: %s", self.__class__.__name__, e)
             return None
 
     def _is_nba_game(self, event_url: str) -> bool:
@@ -137,9 +135,7 @@ class EventScraper(BaseEventScraper):
         url_lower = event_url.lower()
         return any(team in url_lower for team in MGM_NBA_TEAMS)
 
-    def extract_team_info(
-        self, event_url: str
-    ) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Split the MGM slug into (away, home) team tokens."""
         slug = urlparse(event_url).path.split("/")[-1]
 
@@ -172,10 +168,10 @@ class EventScraper(BaseEventScraper):
         """Return today's BetMGM events for the requested league."""
         base_url = MGM_LEAGUE_URLS.get(league.lower())
         if not base_url:
-            raise ValueError(f"Unsupported league: {league}")
+            raise ValueError(f"{self.__class__.__name__} - unsupported league: {league}")
 
         self.log.info(
-            f"Scraping league '{league}', detected local timezone: {self.local_tz}"
+            "%s - scraping league '%s', detected local timezone: %s", self.__class__.__name__, league, self.local_tz
         )
         events: list[Event] = []
 
@@ -199,20 +195,16 @@ class EventScraper(BaseEventScraper):
             )
             page = await context.new_page()
 
-            self.log.info(f"Navigating to {base_url}")
+            self.log.info("%s - navigating to %s", self.__class__.__name__, base_url)
             await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all(
-                "a[href]", "els => els.map(e => e.getAttribute('href'))"
-            )
+            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
 
-            event_paths = sorted(
-                set(h for h in hrefs if h and self.pattern_event_path.match(h))
-            )
+            event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
             event_urls = [self.base_domain + path for path in event_paths]
             if league == "nba":
                 event_urls = list(filter(lambda x: self._is_nba_game(x), event_urls))
-            self.log.info(f"Found {len(event_urls)} event URLs on {base_url}")
+            self.log.info("%s - found %d event URLs on %s", self.__class__.__name__, len(event_urls), base_url)
 
             # Get today's date range in local timezone
             now_local = dt.datetime.now(self.local_tz)
@@ -221,17 +213,15 @@ class EventScraper(BaseEventScraper):
 
             for event_url in event_urls:
                 try:
-                    self.log.info(f"Navigating to event: {event_url}")
-                    await page.goto(
-                        event_url, wait_until="domcontentloaded", timeout=45000
-                    )
+                    self.log.info("%s - navigating to event: %s", self.__class__.__name__, event_url)
+                    await page.goto(event_url, wait_until="domcontentloaded", timeout=45000)
                     await page.wait_for_timeout(2000)
 
                     start_time = await self.extract_start_time(page)
 
                     # Skip if we couldn't get start time
                     if not start_time:
-                        self.log.warning(f"Skipping event {event_url} - no start time")
+                        self.log.warning("%s - skipping event %s - no start time", self.__class__.__name__, event_url)
                         continue
 
                     # Convert to local timezone for comparison
@@ -241,13 +231,20 @@ class EventScraper(BaseEventScraper):
                     if not (today_start <= start_time_local < today_end):
                         local_str = start_time_local.strftime("%Y-%m-%d %I:%M %p %Z")
                         self.log.info(
-                            f"Skipping event {event_url} - not starting today (starts {local_str})"
+                            "%s - skipping event %s - not starting today (starts %s)",
+                            self.__class__.__name__,
+                            event_url,
+                            local_str,
                         )
                         continue
 
                     local_str = start_time_local.strftime("%Y-%m-%d %I:%M %p %Z")
                     self.log.info(
-                        f"Extracted start time for {event_url}: {start_time} ({local_str})"
+                        "%s - extracted start time for %s: %s (%s)",
+                        self.__class__.__name__,
+                        event_url,
+                        start_time,
+                        local_str,
                     )
 
                     event_id = event_url.split("-")[-1]
@@ -269,18 +266,16 @@ class EventScraper(BaseEventScraper):
                     )
 
                 except Exception as e:
-                    self.log.warning(f"Error scraping {event_url}: {e}")
+                    self.log.warning("%s - error scraping %s: %s", self.__class__.__name__, event_url, e)
                     continue
 
             await browser.close()
 
-        self.log.info(f"Total {len(events)} events for today in {league.upper()}.")
+        self.log.info("%s - total %d events for today in %s.", self.__class__.__name__, len(events), league.upper())
         return events
 
 
-def transform_markets_to_records(
-    event_id: str, timestamp: str, markets: list[dict]
-) -> list[dict]:
+def transform_markets_to_records(event_id: str, timestamp: str, markets: list[dict]) -> list[dict]:
     """Flatten scraped market rows into JSONL selection records."""
     records = []
     for m in markets:
@@ -332,10 +327,13 @@ class PollingRunner(BaseRunner):
 
     def __init__(self) -> None:
         """Set defaults for polling cadence and logging intervals."""
-        super().__init__(heartbeat_interval=MGM_HEARTBEAT_SECONDS)
+        super().__init__(
+            heartbeat_interval=MGM_HEARTBEAT_SECONDS,
+            log_color=YELLOW,
+        )
         self.loop_interval = MGM_DEFAULT_MONITOR_INTERVAL
         self.event_log_interval = MGM_EVENT_LOG_INTERVAL
-        self.max_idle_seconds = MGM_MAX_IDLE_SECONDS
+        self.max_idle_seconds = MAX_IDLE_SECONDS
 
     async def extract_markets(self, page) -> list[dict[str, Any]]:
         """Pull structured market rows from the rendered BetMGM DOM."""
@@ -399,14 +397,14 @@ class PollingRunner(BaseRunner):
             )
             return markets
         except Exception as e:
-            self.log.warning(f"Could not extract markets: {e}")
+            self.log.warning("%s - could not extract markets: %s", self.__class__.__name__, e)
             return []
 
     async def run(self, event: Event, output_dir: pathlib.Path, league: str) -> None:
         """Poll the BetMGM page for ``event`` and append odds snapshots."""
 
         event_id = event.event_id
-        self.log.info(f"Starting monitor for {event}")
+        self.log.info("%s - starting monitor for %s", self.__class__.__name__, event)
 
         output_file = odds_filepath(output_dir, league, event_id)
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -428,23 +426,19 @@ class PollingRunner(BaseRunner):
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                locale="en-US", extra_http_headers=headers
-            )
+            context = await browser.new_context(locale="en-US", extra_http_headers=headers)
             page = await context.new_page()
             await page.goto(event.url, wait_until="domcontentloaded", timeout=60000)
 
-            self.log.info(f"Monitoring loop started for {event}...")
+            self.log.info("%s - monitoring loop started for %s...", self.__class__.__name__, event)
 
             with open(output_file, "a") as f:
+                error_count = 0
                 while True:
                     try:
-                        if (
-                            asyncio.current_task()
-                            and asyncio.current_task().cancelled()
-                        ):
+                        if asyncio.current_task() and asyncio.current_task().cancelled():
                             self.log.info(
-                                f"Runner for {event} cancelled, shutting down."
+                                "%s - runner for %s cancelled, shutting down.", self.__class__.__name__, event
                             )
                             break
 
@@ -453,9 +447,7 @@ class PollingRunner(BaseRunner):
                         timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
 
                         if markets:
-                            records = transform_markets_to_records(
-                                event_id, timestamp, markets
-                            )
+                            records = transform_markets_to_records(event_id, timestamp, markets)
                             for rec in records:
                                 hits += 1
                                 f.write(json.dumps(rec) + "\n")
@@ -464,36 +456,48 @@ class PollingRunner(BaseRunner):
                             event_count += 1
 
                         stats = current_stats()
-                        if (
-                            event_count % self.event_log_interval == 0
-                            and event_count > 0
-                        ):
+                        if event_count % self.event_log_interval == 0 and event_count > 0:
                             self.maybe_emit_heartbeat(event, force=True, stats=stats)
 
                         if time.time() - last_event_time > self.max_idle_seconds:
                             self.log.info(
-                                f"No updates for 2 minutes; assuming {event} has ended."
+                                "%s - no updates for %d seconds; assuming %s has ended.",
+                                self.__class__.__name__,
+                                MAX_IDLE_SECONDS,
+                                event,
                             )
                             self.maybe_emit_heartbeat(event, force=True, stats=stats)
                             break
 
                         self.maybe_emit_heartbeat(event, stats=stats)
                         await asyncio.sleep(self.loop_interval)
+                        error_count = 0
 
                     except Exception as e:
-                        self.log.warning(f"Error monitoring {event}: {e}")
-                        self.maybe_emit_heartbeat(event, stats=current_stats())
+                        error_count += 1
+                        self.log.warning("%s - error monitoring %s: %s", self.__class__.__name__, event, e)
+                        current = current_stats()
+                        self.maybe_emit_heartbeat(event, stats=current)
+                        if error_count > MAX_RUNNER_ERRORS:
+                            self.log.error(
+                                "%s - assuming game ended for %s after %d consecutive errors.",
+                                self.__class__.__name__,
+                                event,
+                                error_count,
+                            )
+                            self.maybe_emit_heartbeat(event, force=True, stats=current)
+                            break
                         await asyncio.sleep(self.loop_interval)
 
                         if time.time() - last_event_time > self.max_idle_seconds:
                             self.log.info(
-                                f"No updates for 2 minutes; assuming {event} has ended."
+                                "%s - no updates for 2 minutes; assuming %s has ended.", self.__class__.__name__, event
                             )
-                            self.maybe_emit_heartbeat(event, force=True, stats=stats)
+                            self.maybe_emit_heartbeat(event, force=True, stats=current)
                             break
 
             await browser.close()
-            self.log.info(f"Stopped monitor for {event}")
+            self.log.info("%s - stopped monitor for %s", self.__class__.__name__, event)
 
     def emit_heartbeat(self, event: Event, *, stats: dict[str, Any]) -> None:
         """Log polling throughput using shared formatting."""
@@ -510,22 +514,31 @@ class PollingRunner(BaseRunner):
         per_sec = event_count / max((now - start_wall), 0.1)
         hits = stats["hits"]
         self.log.info(
-            f"{YELLOW}{event}\t\t{worker_runtime:,.2f} worker mins."
-            f"\t{event_runtime:,.0f} event mins."
-            f"\t{per_min:,.2f} msgs/min."
-            f"\t{hits} hits"
-            f"\t{event_count:,.0f} msgs"
-            f"\t{per_sec:.1f} msgs/sec.{RESET}"
+            "%s%s\t%.2f worker mins.\t%.0f event mins.\t%.2f msgs/event min.\t%d hits\t%.0f msgs\t\t%.1f msgs/sec.%s",
+            YELLOW,
+            event,
+            worker_runtime,
+            event_runtime,
+            per_min,
+            hits,
+            event_count,
+            per_sec,
+            RESET,
         )
 
 
-class Monitor(BaseMonitor):
+class BetMGMMonitor(BaseMonitor):
     """Coordinate BetMGM polling runners based on saved snapshots."""
 
     def __init__(self, input_dir: pathlib.Path, concurrency: int = 10) -> None:
         """Initialise monitor state with snapshot directory and policy."""
-        super().__init__(input_dir, PollingRunner(), concurrency=concurrency)
-        self.log.info("Monitor using input directory at %s", self.input_dir)
+        super().__init__(
+            input_dir,
+            PollingRunner(),
+            concurrency=concurrency,
+            log_color=YELLOW,
+        )
+        self.log.info("%s - monitor using input directory at %s", self.__class__.__name__, self.input_dir)
 
 
 async def run_scrape(output_dir: pathlib.Path) -> None:
@@ -535,13 +548,16 @@ async def run_scrape(output_dir: pathlib.Path) -> None:
     await scraper.scrape_and_save_all(output_dir)
 
 
-async def run_monitor(input_dir: pathlib.Path) -> None:
-    """Start BetMGM monitors using existing snapshot files."""
+async def run_monitor(input_dir: pathlib.Path, *, interval: int = MGM_MONITOR_SWEEP_INTERVAL) -> None:
+    """Start BetMGM monitors and continue refreshing snapshot awareness."""
 
-    monitor = Monitor(input_dir)
-    logger.info("Starting monitors for today's events...")
-    await monitor.run_once()
-    logger.info("All monitors started. Running indefinitely...")
+    monitor = BetMGMMonitor(input_dir)
+    logger.info("starting BetMGM monitor loop (interval=%ss)...", interval)
 
     while True:
-        await asyncio.sleep(3600)
+        try:
+            await monitor.run_once()
+        except Exception as exc:  # pragma: no cover - guard for runtime errors
+            logger.error("monitor sweep failed: %s", exc)
+        logger.info("sleeping %ss before next sweep...", interval)
+        await asyncio.sleep(interval)

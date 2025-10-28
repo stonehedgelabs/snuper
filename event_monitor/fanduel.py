@@ -14,6 +14,9 @@ import httpx
 from playwright.async_api import async_playwright
 from tzlocal import get_localzone
 
+from event_monitor.runner import BaseMonitor
+from event_monitor.t import Event
+
 CYAN = "\033[96m"
 """ANSI escape code for cyan logs."""
 
@@ -25,7 +28,7 @@ RESET = "\033[0m"
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(lineno)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] [%(lineno)s]: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -150,9 +153,7 @@ class EventScraper:
         )
         self.base_domain = "https://sportsbook.fanduel.com"
 
-    def extract_team_info(
-        self, event_url: str
-    ) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Split a FanDuel slug into short and long team identifiers."""
         slug = urlparse(event_url).path.split("/")[-1]
         try:
@@ -162,7 +163,7 @@ class EventScraper:
             return None
 
         def _parse_team(part: str) -> tuple[str, str]:
-            """Normalise a slug fragment into (short, long) team names."""
+            """Normalize a slug fragment into (short, long) team names."""
             tokens = part.strip("-").split("-")
             if len(tokens) >= 2:
                 short = tokens[0].lower()
@@ -178,7 +179,7 @@ class EventScraper:
         if not base_url:
             raise ValueError(f"Unsupported league: {league}")
 
-        self.log.info(f"Detected local timezone: {self.local_tz}")
+        self.log.info("%s - detected local timezone: %s", self.__class__.__name__, self.local_tz)
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + dt.timedelta(days=1)
@@ -230,25 +231,19 @@ class EventScraper:
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                locale="en-US", extra_http_headers=headers
-            )
+            context = await browser.new_context(locale="en-US", extra_http_headers=headers)
             page = await context.new_page()
             await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all(
-                "a[href]", "els => els.map(e => e.getAttribute('href'))"
-            )
+            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
             print(hrefs)
             await browser.close()
 
         # Filter for valid relative paths like /football/nfl/new-york-jets-@-cincinnati-bengals-34844525
-        event_paths = sorted(
-            set(h for h in hrefs if h and self.pattern_event_path.match(h))
-        )
+        event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
         event_urls = [self.base_domain + path for path in event_paths]
 
-        self.log.info(f"Found {len(event_urls)} event URLs on {base_url}")
+        self.log.info("%s - found %d event URLs on %s", self.__class__.__name__, len(event_urls), base_url)
 
         for event_url in event_urls:
             try:
@@ -272,24 +267,22 @@ class EventScraper:
                     )
                 )
             except Exception as e:
-                self.log.warning(f"Error parsing {event_url}: {e}")
+                self.log.warning("%s - error parsing %s: %s", self.__class__.__name__, event_url, e)
 
-        self.log.info(f"Total {len(events)} events for today in {league.upper()}.")
+        self.log.info("%s - total %d events for today in %s.", self.__class__.__name__, len(events), league.upper())
         return events
 
-    def save(
-        self, games: list[Event], league: str, output_dir: pathlib.Path
-    ) -> Optional[pathlib.Path]:
+    def save(self, games: list[Event], league: str, output_dir: pathlib.Path) -> Optional[pathlib.Path]:
         """Persist the scraped events unless a snapshot already exists."""
         if not games:
-            self.log.warning(f"No games to save for {league} today.")
+            self.log.warning("%s - no games to save for %s today.", self.__class__.__name__, league)
             return
 
         path = event_filepath(output_dir, league)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fp:
             json.dump([g.to_dict() for g in games], fp, indent=2)
-        self.log.info(f"Saved {len(games)} events to {path}")
+        self.log.info("%s - saved %d events to %s", self.__class__.__name__, len(games), path)
         return path
 
     async def scrape_and_save_all(self, output_dir: pathlib.Path) -> list[pathlib.Path]:
@@ -299,35 +292,28 @@ class EventScraper:
             try:
                 path = event_filepath(output_dir, league)
                 if path.exists():
-                    self.log.warning(f"File {path} already exists. Skipping.")
+                    self.log.warning("%s - file %s already exists. skipping.", self.__class__.__name__, path)
                     continue
-                self.log.info(f"Scraping {league.upper()}...")
+                self.log.info("%s - scraping %s...", self.__class__.__name__, league.upper())
                 games = await self.scrape_today(league)
                 path = self.save(games, league, output_dir)
                 if path:
                     paths.append(path)
             except Exception as e:
-                self.log.error(f"Failed to scrape/save {league}: {e}")
+                self.log.error("%s - failed to scrape/save %s: %s", self.__class__.__name__, league, e)
         return paths
 
 
-class Monitor:
+class FanDuelMonitor(BaseMonitor):
     """Placeholder FanDuel monitor that will poll markets once implemented."""
 
     def __init__(self, input_dir: pathlib.Path, concurrency: int = 10) -> None:
         """Initialise paths and bookkeeping for future polling tasks."""
-        self.input_dir = pathlib.Path(input_dir)
-        self.output_dir = self.input_dir
-        self.concurrency = concurrency
-        self.log = logging.getLogger(self.__class__.__name__)
-        self.active_tasks: dict[str, asyncio.Task] = {}
+        # FanDuel monitor is not yet implemented
+        raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
 
     async def run_once(self) -> None:
         """Raise NotImplementedError until the live monitor is built."""
-        """
-        Placeholder: would read event JSON files and poll FanDuel markets for live odds.
-        FanDuel has no public websocket feed; this must be implemented with polling or private APIs.
-        """
         raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
 
 
@@ -341,5 +327,5 @@ async def run_scrape(output_dir: pathlib.Path) -> None:
 async def run_monitor(input_dir: pathlib.Path) -> None:
     """Execute the placeholder FanDuel monitor."""
 
-    monitor = Monitor(input_dir)
+    monitor = FanDuelMonitor(input_dir)
     await monitor.run_once()

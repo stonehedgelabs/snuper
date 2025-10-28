@@ -35,6 +35,8 @@ disable=
     R0801,  # duplicate-code (too noisy across async patterns)
     E0401,  # import-error (often false positive in virtualenvs)
     R1732,  # consider-using-with (handled safely in Playwright contexts)
+    E1205,  # make logging great again
+    C0301,  # i like long lines
 
 # Enable a few important modern warnings
 enable=
@@ -84,7 +86,6 @@ dummy-variables-rgx=^(_|unused_|ignored_).*
 overgeneral-exceptions=Exception
 
 [SPELLING]
-spelling-dict=en_US
 spelling-ignore-words=asyncio,Playwright,httpx,pytest
 spelling-private-dict-file=
 spelling-store-unknown-words=no

@@ -21,14 +21,12 @@ DATE_STAMP_FORMAT = "%Y%m%d"
 SUPPORTED_LEAGUES = ["nba", "nfl", "mlb"]
 """Canonical list of leagues supported across scrapers."""
 
-# Game lifecycle defaults (seconds)
-GAME_RUNTIME_SECONDS = 5 * 3600
+# Game lifecycle defaults (seconds) - this is an upper bound on game time.
+GAME_RUNTIME_SECONDS = 14400
 """Default event duration used to determine when games expire."""
 
 # DraftKings configuration
-DRAFTKINGS_WEBSOCKET_URL = (
-    "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
-)
+DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
 """Primary DraftKings websocket endpoint for odds streaming."""
 
 DRAFTKINGS_SPREAD_MARKET_TYPE = "Spread"
@@ -57,14 +55,20 @@ DRAFTKINGS_LEAGUE_URLS = {
 MGM_DEFAULT_MONITOR_INTERVAL = 1
 """Seconds between successive MGM page reloads while polling."""
 
+MGM_MONITOR_SWEEP_INTERVAL = 30
+"""Seconds between BetMGM monitor sweeps of stored event snapshots."""
+
 MGM_EVENT_LOG_INTERVAL = 10
 """Number of captured snapshots between MGM heartbeat logs."""
 
-MGM_MAX_IDLE_SECONDS = 120
-"""Maximum idle time before MGM polling terminates a session."""
+MAX_IDLE_SECONDS = 300
+"""Maximum idle time before polling terminates a session."""
 
 MGM_HEARTBEAT_SECONDS = 60
 """Seconds between forced heartbeat logs for MGM events."""
+
+MAX_RUNNER_ERRORS = 5
+"""Maximum consecutive runner errors tolerated before stopping."""
 
 MGM_LEAGUE_URLS = {
     "nfl": "https://www.co.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",

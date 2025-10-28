@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from event_monitor.t import Event
-from event_monitor.utils import load_events
+from event_monitor.utils import configure_colored_logger, load_events
 
 __all__ = ["BaseRunner", "BaseMonitor"]
 
@@ -18,10 +18,18 @@ __all__ = ["BaseRunner", "BaseMonitor"]
 class BaseRunner(abc.ABC):
     """Interface that streams odds updates for an individual event."""
 
-    def __init__(self, *, heartbeat_interval: float | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        heartbeat_interval: float | None = None,
+        log_color: str | None = None,
+    ) -> None:
         """Initialise logging and optional heartbeat cadence."""
 
-        self.log = logging.getLogger(self.__class__.__name__)
+        if log_color:
+            self.log = configure_colored_logger(self.__class__.__name__, log_color)
+        else:
+            self.log = logging.getLogger(self.__class__.__name__)
         self.heartbeat_interval = heartbeat_interval
         self._last_heartbeat = time.time()
 
@@ -43,10 +51,7 @@ class BaseRunner(abc.ABC):
     ) -> None:
         """Emit a heartbeat log if forced or the interval has elapsed."""
 
-        if force or (
-            self.heartbeat_interval
-            and time.time() - self._last_heartbeat >= self.heartbeat_interval
-        ):
+        if force or (self.heartbeat_interval and time.time() - self._last_heartbeat >= self.heartbeat_interval):
             self.emit_heartbeat(event, stats=stats or {})
             self._last_heartbeat = time.time()
 
@@ -65,6 +70,7 @@ class BaseMonitor:
         *,
         output_dir: Path | None = None,
         concurrency: int = 0,
+        log_color: str | None = None,
     ) -> None:
         """Store directory paths, runner instance, and concurrency policy."""
 
@@ -72,11 +78,12 @@ class BaseMonitor:
         self.output_dir = Path(output_dir) if output_dir else self.input_dir
         self.runner = runner
         self.concurrency = concurrency
-        self.log = logging.getLogger(self.__class__.__name__)
+        if log_color:
+            self.log = configure_colored_logger(self.__class__.__name__, log_color)
+        else:
+            self.log = logging.getLogger(self.__class__.__name__)
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
-        self._semaphore = (
-            asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
-        )
+        self._semaphore = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
 
     def event_key(self, event: Event) -> str:
         """Build a unique key used to track active runner tasks."""
@@ -92,7 +99,7 @@ class BaseMonitor:
         """Return the glob pattern that selects today's event snapshots."""
 
         today = dt.datetime.now().strftime("%Y%m%d")
-        return f"*-{today}.json"
+        return f"{today}-*.json"
 
     def _get_event_files(self) -> list[Path]:
         """Return the sorted list of snapshot files to inspect."""
@@ -108,7 +115,7 @@ class BaseMonitor:
             if task.done():
                 exc = task.exception()
                 if exc:
-                    self.log.error("Runner for %s raised %s", key, exc, exc_info=exc)
+                    self.log.error("%s - runner for %s raised %s", self.__class__.__name__, key, exc, exc_info=exc)
                 self.active_tasks.pop(key)
                 continue
 
@@ -116,7 +123,7 @@ class BaseMonitor:
             if live_ids is None or event_id in live_ids:
                 continue
 
-            self.log.info("Cleaning up finished task for %s", key)
+            self.log.info("%s - cleaning up finished task for %s", self.__class__.__name__, key)
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
@@ -137,18 +144,19 @@ class BaseMonitor:
         for league, event in events:
             key = self.event_key(event)
             if key in self.active_tasks:
-                self.log.info("Already running task for %s", event)
+                self.log.info("%s - already running task for %s", self.__class__.__name__, event)
                 continue
 
             if self._semaphore and len(self.active_tasks) >= self.concurrency:
                 self.log.info(
-                    "Concurrency limit %s reached; postponing monitor for %s",
+                    "%s - concurrency limit %s reached; postponing monitor for %s",
+                    self.__class__.__name__,
                     self.concurrency,
                     event,
                 )
                 break
 
-            self.log.info("Starting monitor for %s", event)
+            self.log.info("%s - starting monitor for %s", self.__class__.__name__, event)
             task = asyncio.create_task(self._run_event(event, league))
             self.active_tasks[key] = task
 
@@ -157,7 +165,7 @@ class BaseMonitor:
 
         files = self._get_event_files()
         if not files:
-            self.log.warning("No event files found for today.")
+            self.log.warning("%s - no event files found for today.", self.__class__.__name__)
             return
 
         active_map: dict[str, set[str]] = {}
@@ -167,14 +175,12 @@ class BaseMonitor:
             try:
                 league, events = load_events(file_path)
             except Exception as exc:  # pragma: no cover - guard for runtime errors
-                self.log.error("Failed to load %s: %s", file_path, exc)
+                self.log.error("%s - failed to load %s: %s", self.__class__.__name__, file_path, exc)
                 continue
 
             live_events = [event for event in events if self.should_monitor(event)]
             active_map[league] = {event.event_id for event in live_events}
-            self.log.info(
-                "Found %d live games for league %s.", len(live_events), league
-            )
+            self.log.info("%s - found %d live games for league %s.", self.__class__.__name__, len(live_events), league)
             for event in live_events:
                 to_start.append((league, event))
 

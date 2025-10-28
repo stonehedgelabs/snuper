@@ -20,9 +20,7 @@ def _current_stamp(now: dt.datetime | None = None) -> str:
     return current.strftime(DATE_STAMP_FORMAT)
 
 
-def event_filepath(
-    output_dir: Path, league: str, *, timestamp: str | None = None
-) -> Path:
+def event_filepath(output_dir: Path, league: str, *, timestamp: str | None = None) -> Path:
     """Build the filesystem path for an event snapshot JSON file."""
 
     ts = timestamp or _current_stamp()
@@ -57,26 +55,24 @@ class BaseEventScraper(abc.ABC):
     async def scrape_today(self, league: str) -> list[Event]:
         """Return the list of events scheduled today for ``league``."""
 
-    def save(
-        self, events: Iterable[Event], league: str, output_dir: Path
-    ) -> Path | None:
+    def save(self, events: Iterable[Event], league: str, output_dir: Path) -> Path | None:
         """Persist scraped events to disk unless a prior snapshot exists."""
 
         output_dir = Path(output_dir)
         data = list(events)
         if not data:
-            self.log.warning("No games to save for %s today.", league)
+            self.log.warning("%s - no games to save for %s today.", self.__class__.__name__, league)
             return None
 
         path = event_filepath(output_dir, league)
         if path.exists():
-            self.log.warning("File %s already exists. Skipping.", path)
+            self.log.warning("%s - file %s already exists. skipping.", self.__class__.__name__, path)
             return None
 
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             json.dump([event.to_dict() for event in data], fh, indent=2)
-        self.log.info("Saved %d events to %s", len(data), path)
+        self.log.info("%s - saved %d events to %s", self.__class__.__name__, len(data), path)
         return path
 
     async def scrape_and_save_all(self, output_dir: Path) -> list[Path]:
@@ -87,13 +83,13 @@ class BaseEventScraper(abc.ABC):
         for league in self.leagues:
             path = event_filepath(output_dir, league)
             if path.exists():
-                self.log.warning("File %s already exists. Skipping.", path)
+                self.log.warning("%s - file %s already exists. skipping.", self.__class__.__name__, path)
                 continue
 
             try:
                 events = await self.scrape_today(league)
             except Exception as exc:  # pragma: no cover - safety net for CLI usage
-                self.log.error("Failed to scrape %s: %s", league, exc)
+                self.log.error("%s - failed to scrape %s: %s", self.__class__.__name__, league, exc)
                 continue
 
             saved = self.save(events, league, output_dir)
