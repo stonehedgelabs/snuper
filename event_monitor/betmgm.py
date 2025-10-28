@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = configure_colored_logger(__name__, YELLOW)
 
 
-class EventScraper(BaseEventScraper):
+class BetMGMEventScraper(BaseEventScraper):
     """Scrape BetMGM pages to assemble daily event snapshots."""
 
     def __init__(self) -> None:
@@ -201,6 +201,7 @@ class EventScraper(BaseEventScraper):
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
 
             event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
+            print(">>> events ", event_paths)
             event_urls = [self.base_domain + path for path in event_paths]
             if league == "nba":
                 event_urls = list(filter(lambda x: self._is_nba_game(x), event_urls))
@@ -210,6 +211,13 @@ class EventScraper(BaseEventScraper):
             now_local = dt.datetime.now(self.local_tz)
             today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + dt.timedelta(days=1)
+            logger.info(
+                "%s - MGM date window: Now(%s), Start(%s), End(%s)",
+                self.__class__.__name__,
+                now_local,
+                today_start,
+                today_end,
+            )
 
             for event_url in event_urls:
                 try:
@@ -226,6 +234,12 @@ class EventScraper(BaseEventScraper):
 
                     # Convert to local timezone for comparison
                     start_time_local = start_time.astimezone(self.local_tz)
+                    self.log.info(
+                        "%s - MGM start time conversion: UTC(%s) -> Local(%s)",
+                        self.__class__.__name__,
+                        start_time,
+                        start_time_local,
+                    )
 
                     # Filter: only include games starting today (in local timezone)
                     if not (today_start <= start_time_local < today_end):
@@ -544,7 +558,7 @@ class BetMGMMonitor(BaseMonitor):
 async def run_scrape(output_dir: pathlib.Path) -> None:
     """Invoke the BetMGM scraper with the supplied destination."""
 
-    scraper = EventScraper()
+    scraper = BetMGMEventScraper()
     await scraper.scrape_and_save_all(output_dir)
 
 

@@ -14,7 +14,6 @@ class ScrapeRunner(Protocol):
 
 
 PROVIDER_ALIASES: dict[str, str] = {
-    "dk": "draftkings",
     "draftkings": "draftkings",
     "betmgm": "betmgm",
     # "fanduel": "fanduel",

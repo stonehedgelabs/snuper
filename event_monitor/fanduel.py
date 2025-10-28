@@ -1,20 +1,15 @@
 from __future__ import annotations
-import asyncio
 import datetime as dt
-import json
 import logging
-import os
 import re
-import time
 import pathlib
-from typing import Any, Optional
-from urllib.parse import urlparse, unquote
-
-import httpx
+from typing import Any
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 from tzlocal import get_localzone
 
 from event_monitor.runner import BaseMonitor
+from event_monitor.scraper import BaseEventScraper
 from event_monitor.t import Event
 
 CYAN = "\033[96m"
@@ -46,22 +41,6 @@ FANDUEL_LEAGUE_URLS = {
 """League entry points used to discover FanDuel events."""
 
 
-def event_filepath(output_dir: pathlib.Path, league: str) -> pathlib.Path:
-    """Build the path where FanDuel event snapshots are stored."""
-    path = pathlib.Path(output_dir) / "events"
-    timestamp = dt.datetime.now().strftime("%Y%m%d")
-    filename = f"{league}-{timestamp}.json"
-    return path.joinpath(filename)
-
-
-def odds_filepath(output_dir: pathlib.Path, league: str, event_id: str) -> pathlib.Path:
-    """Build the path where FanDuel odds logs are appended."""
-    path = pathlib.Path(output_dir) / "odds"
-    timestamp = dt.datetime.now().strftime("%Y%m%d")
-    filename = f"{league}-{timestamp}-{event_id}.json"
-    return path.joinpath(filename)
-
-
 def flatten_fanduel_markets(data: dict) -> list[dict[str, Any]]:
     """
     Convert FanDuel API market payloads into DK-style flat structures.
@@ -79,73 +58,12 @@ def parse_event_markets_fanduel(event_id: str) -> list[dict[str, Any]]:
     raise NotImplementedError("TODO: Implement FanDuel market request + flattening")
 
 
-# ---------------------------------------------------------------------
-# Event object
-# ---------------------------------------------------------------------
-
-
-class Event:
-    """FanDuel-specific event model used by the legacy monitor."""
-
-    def __init__(
-        self,
-        event_id: str,
-        league: str,
-        url: str,
-        start_time: dt.datetime,
-        away: tuple[str, str],
-        home: tuple[str, str],
-        selections: Optional[list],
-    ) -> None:
-        """Store identifying data and selections for a FanDuel event."""
-
-        self.event_id = event_id
-        self.league = league
-        self.url = url
-        self.start_time = start_time
-        self.away = away
-        self.home = home
-        self.selections = selections
-        self.log = logging.getLogger(self.__class__.__name__)
-
-    def get_key(self) -> str:
-        """Return the unique league:event_id pairing for the event."""
-        return f"{self.league}:{self.event_id}"
-
-    def has_started(self) -> bool:
-        """Return True once the scheduled start time has passed."""
-        return self.start_time <= dt.datetime.now(dt.timezone.utc)
-
-    def is_finished(self) -> bool:
-        """Return True when the game runtime has exceeded the threshold."""
-        delta = dt.datetime.now(dt.timezone.utc) - self.start_time
-        return delta.total_seconds() > GAME_RUNTIME
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialise the event so it can be written to disk."""
-        return {
-            "event_id": self.event_id,
-            "league": self.league,
-            "event_url": self.url,
-            "start_time_utc": self.start_time.isoformat(),
-            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "selections": self.selections,
-            "away": self.away,
-            "home": self.home,
-        }
-
-    def __repr__(self) -> str:
-        """Provide a concise string used in debug logs."""
-        return f"<Event[{self.league}, {self.event_id}, {self.away[0]}@{self.home[0]}]>"
-
-
-class EventScraper:
+class EventScraper(BaseEventScraper):
     """Scrape FanDuel league listings to build event snapshots."""
 
     def __init__(self) -> None:
         """Initialise league list, logger, and regex helpers."""
-        self.leagues = list(FANDUEL_LEAGUE_URLS.keys())
-        self.log = logging.getLogger(self.__class__.__name__)
+        super().__init__(tuple(FANDUEL_LEAGUE_URLS.keys()))
         self.local_tz = get_localzone()
         self.pattern_event_path = re.compile(
             r"^/(football|baseball)/[a-z]+/[a-z0-9\-@%]+-\d+$",
@@ -271,37 +189,6 @@ class EventScraper:
 
         self.log.info("%s - total %d events for today in %s.", self.__class__.__name__, len(events), league.upper())
         return events
-
-    def save(self, games: list[Event], league: str, output_dir: pathlib.Path) -> Optional[pathlib.Path]:
-        """Persist the scraped events unless a snapshot already exists."""
-        if not games:
-            self.log.warning("%s - no games to save for %s today.", self.__class__.__name__, league)
-            return
-
-        path = event_filepath(output_dir, league)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fp:
-            json.dump([g.to_dict() for g in games], fp, indent=2)
-        self.log.info("%s - saved %d events to %s", self.__class__.__name__, len(games), path)
-        return path
-
-    async def scrape_and_save_all(self, output_dir: pathlib.Path) -> list[pathlib.Path]:
-        """Scrape every supported league and write their snapshots."""
-        paths = []
-        for league in self.leagues:
-            try:
-                path = event_filepath(output_dir, league)
-                if path.exists():
-                    self.log.warning("%s - file %s already exists. skipping.", self.__class__.__name__, path)
-                    continue
-                self.log.info("%s - scraping %s...", self.__class__.__name__, league.upper())
-                games = await self.scrape_today(league)
-                path = self.save(games, league, output_dir)
-                if path:
-                    paths.append(path)
-            except Exception as e:
-                self.log.error("%s - failed to scrape/save %s: %s", self.__class__.__name__, league, e)
-        return paths
 
 
 class FanDuelMonitor(BaseMonitor):

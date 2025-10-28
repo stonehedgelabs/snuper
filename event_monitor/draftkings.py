@@ -339,7 +339,7 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
     return hits
 
 
-class EventScraper(BaseEventScraper):
+class DraftkingsEventScraper(BaseEventScraper):
     """Scrape DraftKings league pages for daily event metadata."""
 
     def __init__(self) -> None:
@@ -381,6 +381,13 @@ class EventScraper(BaseEventScraper):
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + dt.timedelta(days=1)
+        logger.info(
+            "%s - using date info: Now(%s), StartOfDay(%s), EndOfDay(%s)",
+            self.__class__.__name__,
+            now,
+            start_of_day,
+            end_of_day,
+        )
         events: list[Event] = []
 
         async with async_playwright() as p:
@@ -400,10 +407,29 @@ class EventScraper(BaseEventScraper):
                 r = httpx.get(event_url, headers=headers, timeout=10)
                 match = self.pattern_date.search(r.text)
                 if not match:
+                    self.log.warning("%s - no date pattern match found for %s", self.__class__.__name__, event_url)
                     continue
                 utc_str = match.group(1)
                 dt_utc = dt.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
                 dt_local = dt_utc.astimezone(self.local_tz)
+
+                if not start_of_day <= dt_local < end_of_day:
+                    self.log.warning(
+                        "%s - date condition *NOT* met - StartOfDay(%s) <= Local(%s) < EndOfDay(%s)",
+                        self.__class__.__name__,
+                        start_of_day,
+                        dt_local,
+                        end_of_day,
+                    )
+                    continue
+
+                self.log.warning(
+                    "%s - date condition met - StartOfDay(%s) <= Local(%s) < EndOfDay(%s)",
+                    self.__class__.__name__,
+                    start_of_day,
+                    dt_local,
+                    end_of_day,
+                )
                 if start_of_day <= dt_local < end_of_day:
                     event_id = event_url.split("/")[-1]
                     away, home = self.extract_team_info(event_url) or (
@@ -666,7 +692,7 @@ class DraftKingsMonitor(BaseMonitor):
 async def run_scrape(output_dir: pathlib.Path) -> None:
     """Invoke the DraftKings scraper with the provided destination."""
 
-    scraper = EventScraper()
+    scraper = DraftkingsEventScraper()
     await scraper.scrape_and_save_all(output_dir)
 
 
