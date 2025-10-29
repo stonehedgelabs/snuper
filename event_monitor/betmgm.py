@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import datetime as dt
+import json
 import logging
 import os
 import zoneinfo
@@ -17,7 +18,6 @@ from tzlocal import get_localzone
 from event_monitor.constants import (
     YELLOW,
     RED,
-    RESET,
     MGM_DEFAULT_MONITOR_INTERVAL,
     MGM_MONITOR_SWEEP_INTERVAL,
     MGM_EVENT_LOG_INTERVAL,
@@ -32,7 +32,14 @@ from event_monitor.constants import (
 from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
 from event_monitor.t import Event, Selection, SelectionChange
-from event_monitor.utils import configure_colored_logger, decimal_to_american, odds_filepath
+from event_monitor.utils import (
+    configure_colored_logger,
+    decimal_to_american,
+    format_bytes,
+    format_duration,
+    format_rate_per_sec,
+    odds_filepath,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -471,6 +478,7 @@ class PollingRunner(BaseRunner):
         last_event_time = time.time()
         event_count = 0
         hits = 0
+        total_bytes = 0
         self.reset_heartbeat()
 
         def current_stats() -> dict[str, Any]:
@@ -479,6 +487,7 @@ class PollingRunner(BaseRunner):
                 "event_count": event_count,
                 "hits": hits,
                 "event_start": event.start_time,
+                "bytes_received": total_bytes,
             }
 
         async with async_playwright() as p:
@@ -515,7 +524,9 @@ class PollingRunner(BaseRunner):
                             changes = transform_markets_to_records(event, markets)
                             for change in changes:
                                 hits += 1
-                                f.write(change.to_json() + "\n")
+                                payload = change.to_json()
+                                total_bytes += len(payload.encode("utf-8")) + 1
+                                f.write(payload + "\n")
                             f.flush()
                             last_event_time = time.time()
                             event_count += 1
@@ -565,38 +576,31 @@ class PollingRunner(BaseRunner):
             self.log.info("%s - stopped monitor for %s", self.__class__.__name__, event)
 
     def emit_heartbeat(self, event: Event, *, stats: dict[str, Any]) -> None:
-        """Log polling throughput using shared formatting."""
+        """Emit a one-line JSON payload describing polling throughput."""
 
         start_wall = stats.get("start_wall", time.time())
-        event_count = stats.get("event_count", 0)
+        event_count = int(stats.get("event_count", 0))
+        hits = int(stats.get("hits", 0))
+        bytes_received = int(stats.get("bytes_received", 0))
         event_start: dt.datetime = stats.get("event_start", event.start_time)
 
         now = time.time()
         now_utc = dt.datetime.now(dt.timezone.utc)
-        worker_runtime = (now - start_wall) / 60.0
-        event_runtime = max((now_utc - event_start).total_seconds() / 60.0, 0.1)
-        per_min = event_count / event_runtime if event_runtime else 0.0
-        per_sec = event_count / max((now - start_wall), 0.1)
-        hits = stats["hits"]
-        formatted_worker_runtime = f"{worker_runtime:,.2f}"
-        formatted_event_runtime = f"{event_runtime:,.0f}"
-        formatted_per_min = f"{per_min:,.2f}"
-        formatted_hits = f"{hits:,d}"
-        formatted_event_count = f"{event_count:,.0f}"
-        formatted_per_sec = f"{per_sec:,.1f}"
+        worker_elapsed = max(now - start_wall, 0.0)
+        event_elapsed = max((now_utc - event_start).total_seconds(), 0.0)
 
-        self.log.info(
-            "%s%s\t%s worker mins.\t%s event mins.\t%s msgs/event min.\t%s hits\t%s msgs\t\t%s msgs/sec.%s",
-            YELLOW,
-            event,
-            formatted_worker_runtime,
-            formatted_event_runtime,
-            formatted_per_min,
-            formatted_hits,
-            formatted_event_count,
-            formatted_per_sec,
-            RESET,
-        )
+        payload = {
+            "event": str(event),
+            "worker_time": format_duration(worker_elapsed),
+            "event_runtime": format_duration(event_elapsed),
+            "msgs_rcvd": f"{event_count:,d}",
+            "msgs_rcvd_per_sec": format_rate_per_sec(event_count, worker_elapsed),
+            "total_bytes_rcvd": format_bytes(bytes_received),
+            "odds_rcvd": f"{hits:,d}",
+            "odds_rcvd_per_sec": format_rate_per_sec(hits, worker_elapsed),
+        }
+
+        self.log.info(json.dumps(payload, separators=(",", ":")))
 
 
 class BetMGMMonitor(BaseMonitor):

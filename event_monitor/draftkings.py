@@ -21,7 +21,6 @@ from playwright.async_api import async_playwright
 from event_monitor.constants import (
     CYAN,
     RED,
-    RESET,
     MAX_IDLE_SECONDS,
     MAX_RUNNER_ERRORS,
     DRAFTKINGS_DEFAULT_MONITOR_INTERVAL,
@@ -36,7 +35,13 @@ from event_monitor.constants import (
 from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
 from event_monitor.t import Event, Selection, SelectionChange
-from event_monitor.utils import configure_colored_logger, odds_filepath
+from event_monitor.utils import (
+    configure_colored_logger,
+    format_bytes,
+    format_duration,
+    format_rate_per_sec,
+    odds_filepath,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -302,8 +307,11 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         state.sel[sid] = merged
 
         oa = merged.get("odds_array") or []
+        odds_raw = oa[0] if oa else None
+        odds_ascii = sanitize_american_odds(odds_raw)
+
         fp = (
-            oa[0] if oa else None,
+            odds_raw,
             oa[1] if len(oa) > 1 else None,
             merged.get("odds_decimal"),
             merged.get("spread_or_line"),
@@ -325,7 +333,7 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
                 "market_name": market_type,
                 "marketType": market_type,
                 "label": merged.get("label"),
-                "odds_american": oa[0] if oa else None,
+                "odds_american": odds_ascii,
                 "odds_decimal": (oa[1] if len(oa) > 1 else None) or merged.get("odds_decimal"),
                 "spread_or_line": merged.get("spread_or_line"),
                 "bet_type": bet_type,
@@ -510,6 +518,7 @@ class WebsocketRunner(BaseRunner):
         start = time.time()
         events = 0
         nhits = 0
+        total_bytes = 0
         last_event_time = time.time()
         self.reset_heartbeat()
         error_count = 0
@@ -520,6 +529,7 @@ class WebsocketRunner(BaseRunner):
                 "events": events,
                 "event_start": game.start_time,
                 "hits": nhits,
+                "bytes_received": total_bytes,
             }
 
         while True:
@@ -558,8 +568,15 @@ class WebsocketRunner(BaseRunner):
                                 continue
 
                             try:
+                                if isinstance(msg, str):
+                                    msg_bytes = msg.encode("utf-8")
+                                else:
+                                    msg_bytes = msg
+
+                                total_bytes += len(msg_bytes)
+
                                 hits = process_dk_frame(
-                                    msg,
+                                    msg_bytes,
                                     game.event_id,
                                     state,
                                     selection_ids,
@@ -621,38 +638,31 @@ class WebsocketRunner(BaseRunner):
                 await asyncio.sleep(5)
 
     def emit_heartbeat(self, event: Event, *, stats: dict[str, Any]) -> None:
-        """Log websocket throughput using consistent formatting."""
+        """Emit a one-line JSON payload describing websocket throughput."""
 
         start = stats.get("start", time.time())
-        events = stats.get("events", 0)
+        events = int(stats.get("events", 0))
+        hits = int(stats.get("hits", 0))
+        bytes_received = int(stats.get("bytes_received", 0))
         event_start: dt.datetime = stats.get("event_start", event.start_time)
 
         now = time.time()
         now_utc = dt.datetime.now(dt.timezone.utc)
-        worker_runtime = (now - start) / 60.0
-        event_runtime = max((now_utc - event_start).total_seconds() / 60.0, 0.1)
-        per_min = events / event_runtime if event_runtime else 0.0
-        per_sec = events / max((now - start), 0.1)
-        hits = stats["hits"]
-        formatted_worker_runtime = f"{worker_runtime:,.2f}"
-        formatted_event_runtime = f"{event_runtime:,.0f}"
-        formatted_per_min = f"{per_min:,.2f}"
-        formatted_hits = f"{hits:,d}"
-        formatted_events = f"{events:,.0f}"
-        formatted_per_sec = f"{per_sec:,.1f}"
+        worker_elapsed = max(now - start, 0.0)
+        event_elapsed = max((now_utc - event_start).total_seconds(), 0.0)
 
-        self.log.info(
-            "%s\t%s\t%s worker mins.\t%s event mins.\t%s msgs/event min.\t%s hits\t%s msgs\t\t%s msgs/sec.%s",
-            CYAN,
-            event,
-            formatted_worker_runtime,
-            formatted_event_runtime,
-            formatted_per_min,
-            formatted_hits,
-            formatted_events,
-            formatted_per_sec,
-            RESET,
-        )
+        payload = {
+            "event": str(event),
+            "worker_time": format_duration(worker_elapsed),
+            "event_runtime": format_duration(event_elapsed),
+            "msgs_rcvd": f"{events:,d}",
+            "msgs_rcvd_per_sec": format_rate_per_sec(events, worker_elapsed),
+            "total_bytes_rcvd": format_bytes(bytes_received),
+            "odds_rcvd": f"{hits:,d}",
+            "odds_rcvd_per_sec": format_rate_per_sec(hits, worker_elapsed),
+        }
+
+        self.log.info(json.dumps(payload, separators=(",", ":")))
 
 
 class DraftKingsMonitor(BaseMonitor):
