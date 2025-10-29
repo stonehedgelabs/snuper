@@ -477,14 +477,15 @@ class Selection:
 class SelectionChange:
     """Represent a timestamped selection change in JSONL logs."""
 
-    def __init__(self, selection: Selection) -> None:
+    def __init__(self, label: str, selection: Selection) -> None:
         """Capture the selection and record the observation time."""
         self.created_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        self.label = label
         self.selection = selection
 
     def to_json(self) -> str:
         """Serialise the selection change into a JSON string."""
-        return json.dumps({"created_at": self.created_at, "data": self.selection.to_dict()})
+        return json.dumps({"created_at": self.created_at, "label": self.label, "data": self.selection.to_dict()})
 
 
 class WebsocketRunner(BaseRunner):
@@ -604,7 +605,7 @@ class WebsocketRunner(BaseRunner):
 
                                 for hit in hits:
                                     sel = Selection(game.event_id, hit)
-                                    change = SelectionChange(sel)
+                                    change = SelectionChange(game.game_label(), sel)
                                     writer.write(change.to_json() + "\n")
                                     writer.flush()
 

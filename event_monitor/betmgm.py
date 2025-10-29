@@ -337,8 +337,10 @@ class BetMGMEventScraper(BaseEventScraper):
         return events
 
 
-def transform_markets_to_records(event_id: str, timestamp: str, markets: list[dict]) -> list[dict]:
+def transform_markets_to_records(event: Event, markets: list[dict]) -> list[dict]:
     """Flatten scraped market rows into JSONL selection records."""
+
+    timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
     records = []
     for m in markets:
         odds_dec = m.get("odds")
@@ -362,7 +364,7 @@ def transform_markets_to_records(event_id: str, timestamp: str, markets: list[di
                     line_val = None
 
         data = {
-            "event_id": event_id,
+            "event_id": event.event_id,
             "selection_id": m.get("option_id"),
             "market_id": None,
             "market_name": market_type,
@@ -378,6 +380,7 @@ def transform_markets_to_records(event_id: str, timestamp: str, markets: list[di
 
         record = {
             "created_at": timestamp,
+            "label": event.game_label(),
             "data": data,
         }
         records.append(record)
@@ -515,10 +518,9 @@ class PollingRunner(BaseRunner):
 
                         await page.reload(wait_until="domcontentloaded", timeout=30000)
                         markets = await self.extract_markets(page)
-                        timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
 
                         if markets:
-                            records = transform_markets_to_records(event_id, timestamp, markets)
+                            records = transform_markets_to_records(event, markets)
                             for rec in records:
                                 hits += 1
                                 f.write(json.dumps(rec) + "\n")

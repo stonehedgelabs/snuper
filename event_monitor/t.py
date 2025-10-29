@@ -1,8 +1,11 @@
 import datetime as dt
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional
 
-from event_monitor.constants import GAME_RUNTIME_SECONDS
+import inflection
+import rapidfuzz
+
+from event_monitor.constants import GAME_RUNTIME_SECONDS, MGM_NFL_TEAMS, MGM_MLB_TEAMS, MGM_NBA_TEAMS
 
 
 class Event:
@@ -38,6 +41,37 @@ class Event:
         """Return ``True`` once the event's scheduled start time has passed."""
 
         return self.start_time <= dt.datetime.now(dt.timezone.utc)
+
+    def game_label(self) -> str:
+
+        # League-to-team mapping
+        league_team_sets = {
+            "mlb": MGM_MLB_TEAMS,
+            "nfl": MGM_NFL_TEAMS,
+            "nba": MGM_NBA_TEAMS,
+        }
+
+        teams = league_team_sets.get(self.league.lower())
+        if not teams:
+            self.log.warning("Unknown league for event: %s", self.league)
+            return f"{self.away} @ {self.home}"
+
+        def resolve_team_name(tokens: tuple[str, str]) -> str:
+            """Resolve the most likely canonical team name using fuzzy matching."""
+            slug = "-".join(tokens).lower()
+
+            # Find the best fuzzy match within this league’s team set
+            match, score, _ = rapidfuzz.process.extractOne(slug, teams, score_cutoff=70)
+
+            # Fallback if no close match is found
+            canonical = match if match else slug
+
+            # Convert canonical slug to readable title form
+            return " ".join(word.capitalize() for word in canonical.split("-"))
+
+        away_name = resolve_team_name(self.away)
+        home_name = resolve_team_name(self.home)
+        return f"{away_name} @ {home_name}"
 
     def is_finished(self) -> bool:
         """Return ``True`` when the event has run longer than the max runtime."""

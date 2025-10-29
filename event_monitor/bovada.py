@@ -14,8 +14,6 @@ from event_monitor.constants import (
     MGM_MLB_TEAMS,
     MGM_NFL_TEAMS,
     League,
-    SPORTS,
-    BOVADA_COMPEITION_IDS,
 )
 from event_monitor.runner import BaseMonitor
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
@@ -73,42 +71,41 @@ event_headers = {
 }
 
 
-# def build_bovada_url(event: Event) -> str:
-#     def slugify(team: tuple[str, str]) -> str:
-#         tokens = [part for part in team if part]
-#         if not tokens:
-#             return ""
-#         return "-".join(tokens).lower().replace(" ", "-")
-#
-#     def resolve_team_slug(team: tuple[str, str]) -> str:
-#         tokens = [part for part in team if part]
-#         slug = slugify(team)
-#         for pool in (MGM_NBA_TEAMS, MGM_NFL_TEAMS, MGM_MLB_TEAMS):
-#             for candidate in pool:
-#                 if all(token in candidate for token in tokens):
-#                     return candidate
-#         return slug
-#
-#     def format_date(start_time: dt.datetime) -> str:
-#         if start_time.tzinfo is None:
-#             start_time = start_time.replace(tzinfo=dt.timezone.utc)
-#         est = pytz.timezone("US/Eastern")
-#         localized = start_time.astimezone(est)
-#         return localized.strftime("%Y%m%d%H")
-#
-#     sport = SPORTS[event.league]
-#     away = resolve_team_slug(event.away)
-#     home = resolve_team_slug(event.home)
-#     date_str = format_date(event.start_time)
-#     return (
-#         f"https://www.bovada.lv/sports/{sport}/{event.league}/{away}-{home}-{date_str}?lang=en"
-#     )
-
-
 def derive_bovada_timestamp(ts: int) -> dt.datetime:
     dt_utc = dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc)
     # dt_est = dt_utc.astimezone(pytz.timezone("US/Eastern"))
     return dt_utc.astimezone(dt.timezone.utc)
+
+
+def is_league_matchup(path: str, league: str) -> bool:
+    league = league.lower().strip()
+    path = path.lower().strip()
+
+    # Map league identifiers to team sets
+    league_teams = {
+        "mlb": MGM_MLB_TEAMS,
+        "nfl": MGM_NFL_TEAMS,
+        "nba": MGM_NBA_TEAMS,
+    }.get(league)
+
+    if not league_teams:
+        raise ValueError(f"Unsupported league: {league}")
+
+    # Extract the final slug (e.g. "toronto-blue-jays-los-angeles-dodgers-202510292010")
+    try:
+        slug = path.split(f"/{league}/")[1].split("/")[-1]
+    except IndexError:
+        return False
+
+    # Remove date/time suffix if present
+    parts = slug.split("-")
+    if parts and parts[-1].isdigit():
+        parts = parts[:-1]
+    slug = "-".join(parts)
+
+    # Count how many known teams appear in this slug
+    matched_teams = [team for team in league_teams if team in slug]
+    return len(matched_teams) == 2
 
 
 class BovadaEventScraper(BaseEventScraper):
@@ -126,42 +123,6 @@ class BovadaEventScraper(BaseEventScraper):
             output_dir=output_dir,
             input_dir=input_dir,
         )
-
-    # def load_draftkings_events(self, context: ScrapeContext) -> list[Event]:
-    #     filepath = event_filepath(
-    #         context.input_dir,
-    #         context.league,
-    #         timestamp=context.stamp,
-    #     )
-    #     league_name, events = load_events(filepath)
-    #     if league_name != context.league:
-    #         self.log.warning(
-    #             "%s - snapshot league %s mismatched requested %s",
-    #             self.__class__.__name__,
-    #             league_name,
-    #             context.league,
-    #         )
-    #     return events
-
-    # async def load_source_events(self, context: ScrapeContext) -> Sequence[Event] | None:
-    #     filepath = event_filepath(
-    #         context.input_dir,
-    #         context.league,
-    #         timestamp=context.stamp,
-    #     )
-    #     if not filepath.exists():
-    #         self.log.warning("%s - missing DraftKings snapshot %s", self.__class__.__name__, filepath)
-    #         return []
-    #     try:
-    #         return self.load_draftkings_events(context)
-    #     except Exception as exc:
-    #         self.log.error(
-    #             "%s - failed to load DraftKings events from %s: %s",
-    #             self.__class__.__name__,
-    #             filepath,
-    #             exc,
-    #         )
-    #         return []
 
     async def scrape_today(
         self,
@@ -185,14 +146,15 @@ class BovadaEventScraper(BaseEventScraper):
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + dt.timedelta(days=1)
-        competition_id = BOVADA_COMPEITION_IDS[context.league]
 
         for group in data:
             for ev in group.get("events", []):
-                self.log.info("%s - expected competition id: %s, actual competition id: %s", self.__class__.__name__, competition_id, ev.get("competitionId"))
-                if ev.get("competitionId") != competition_id:
+                if not is_league_matchup(ev.get("link"), context.league):
                     self.log.warning(
-                        "%s - skipping invalid competition event: %s", self.__class__.__name__, ev.get("description")
+                        "%s - Event %s is not a part of league %s",
+                        self.__class__.__name__,
+                        ev.get("link"),
+                        context.league,
                     )
                     continue
 

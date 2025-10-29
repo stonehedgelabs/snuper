@@ -207,9 +207,4 @@ SPORTS = {
     "mlb": "baseball",
     "nfl": "football",
 }
-
-BOVADA_COMPEITION_IDS = {
-    "nba": "2958468",
-    "mlb": "8980269",
-    "nfl": "241",
-}
+"""Sports"""
