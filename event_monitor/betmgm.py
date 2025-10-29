@@ -1,7 +1,6 @@
 from __future__ import annotations
 import asyncio
 import datetime as dt
-import json
 import logging
 import os
 import zoneinfo
@@ -32,7 +31,7 @@ from event_monitor.constants import (
 )
 from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
-from event_monitor.t import Event
+from event_monitor.t import Event, Selection, SelectionChange
 from event_monitor.utils import configure_colored_logger, decimal_to_american, odds_filepath
 
 logging.basicConfig(
@@ -337,23 +336,20 @@ class BetMGMEventScraper(BaseEventScraper):
         return events
 
 
-def transform_markets_to_records(event: Event, markets: list[dict]) -> list[dict]:
-    """Flatten scraped market rows into JSONL selection records."""
+def transform_markets_to_records(event: Event, markets: list[dict]) -> list[SelectionChange]:
+    """Flatten scraped market rows into typed selection change records."""
 
-    timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
-    records = []
-    for m in markets:
-        odds_dec = m.get("odds")
+    changes: list[SelectionChange] = []
+    for market in markets:
+        odds_dec = market.get("odds")
         odds_am = decimal_to_american(odds_dec)
-        market_type = m.get("market_type")
+        market_type = market.get("market_type")
 
         # Parse line/spread numerically if possible
         line_val = None
-        line_raw = m.get("line")
+        line_raw = market.get("line")
         if line_raw:
             # e.g. "+1.5" or "O 44.5" or "U 44.5"
-            import re
-
             nums = re.findall(r"[-+]?\d*\.?\d+", line_raw)
             if nums:
                 try:
@@ -363,28 +359,24 @@ def transform_markets_to_records(event: Event, markets: list[dict]) -> list[dict
                 except ValueError:
                     line_val = None
 
-        data = {
-            "event_id": event.event_id,
-            "selection_id": m.get("option_id"),
+        selection_data = {
+            "selection_id": market.get("option_id"),
             "market_id": None,
             "market_name": market_type,
             "marketType": market_type,
-            "label": m.get("team"),
+            "label": market.get("team"),
             "odds_american": odds_am,
             "odds_decimal": odds_dec,
             "spread_or_line": line_val,
             "bet_type": market_type,
-            "participant": m.get("team"),
+            "participant": market.get("team"),
             "match": f"exact:selection:{market_type}",
         }
 
-        record = {
-            "created_at": timestamp,
-            "label": event.game_label(),
-            "data": data,
-        }
-        records.append(record)
-    return records
+        selection = Selection(event.event_id, selection_data)
+        changes.append(SelectionChange(event.game_label(), selection))
+
+    return changes
 
 
 class PollingRunner(BaseRunner):
@@ -520,10 +512,10 @@ class PollingRunner(BaseRunner):
                         markets = await self.extract_markets(page)
 
                         if markets:
-                            records = transform_markets_to_records(event, markets)
-                            for rec in records:
+                            changes = transform_markets_to_records(event, markets)
+                            for change in changes:
                                 hits += 1
-                                f.write(json.dumps(rec) + "\n")
+                                f.write(change.to_json() + "\n")
                             f.flush()
                             last_event_time = time.time()
                             event_count += 1
@@ -586,16 +578,23 @@ class PollingRunner(BaseRunner):
         per_min = event_count / event_runtime if event_runtime else 0.0
         per_sec = event_count / max((now - start_wall), 0.1)
         hits = stats["hits"]
+        formatted_worker_runtime = f"{worker_runtime:,.2f}"
+        formatted_event_runtime = f"{event_runtime:,.0f}"
+        formatted_per_min = f"{per_min:,.2f}"
+        formatted_hits = f"{hits:,d}"
+        formatted_event_count = f"{event_count:,.0f}"
+        formatted_per_sec = f"{per_sec:,.1f}"
+
         self.log.info(
-            "%s%s\t%.2f worker mins.\t%.0f event mins.\t%.2f msgs/event min.\t%d hits\t%.0f msgs\t\t%.1f msgs/sec.%s",
+            "%s%s\t%s worker mins.\t%s event mins.\t%s msgs/event min.\t%s hits\t%s msgs\t\t%s msgs/sec.%s",
             YELLOW,
             event,
-            worker_runtime,
-            event_runtime,
-            per_min,
-            hits,
-            event_count,
-            per_sec,
+            formatted_worker_runtime,
+            formatted_event_runtime,
+            formatted_per_min,
+            formatted_hits,
+            formatted_event_count,
+            formatted_per_sec,
             RESET,
         )
 

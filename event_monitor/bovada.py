@@ -93,7 +93,7 @@ def is_league_matchup(path: str, league: str) -> bool:
 
     # Extract the final slug (e.g. "toronto-blue-jays-los-angeles-dodgers-202510292010")
     try:
-        slug = path.split(f"/{league}/")[1].split("/")[-1]
+        slug = path.split("/")[-1]
     except IndexError:
         return False
 

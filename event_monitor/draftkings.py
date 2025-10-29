@@ -35,7 +35,7 @@ from event_monitor.constants import (
 )
 from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
-from event_monitor.t import Event
+from event_monitor.t import Event, Selection, SelectionChange
 from event_monitor.utils import configure_colored_logger, odds_filepath
 
 logging.basicConfig(
@@ -459,35 +459,6 @@ class DraftkingsEventScraper(BaseEventScraper):
         return events
 
 
-class Selection:
-    """Wrap a selection payload with its parent event id."""
-
-    def __init__(self, event_id: str, data: dict[str, Any]) -> None:
-        """Store the event id and selection payload for later serialisation."""
-        self.event_id = event_id
-        self.data = data
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a dictionary ready to be appended to the odds log."""
-        d = {"event_id": self.event_id}
-        d.update(self.data)
-        return d
-
-
-class SelectionChange:
-    """Represent a timestamped selection change in JSONL logs."""
-
-    def __init__(self, label: str, selection: Selection) -> None:
-        """Capture the selection and record the observation time."""
-        self.created_at = dt.datetime.now(dt.timezone.utc).isoformat()
-        self.label = label
-        self.selection = selection
-
-    def to_json(self) -> str:
-        """Serialise the selection change into a JSON string."""
-        return json.dumps({"created_at": self.created_at, "label": self.label, "data": self.selection.to_dict()})
-
-
 class WebsocketRunner(BaseRunner):
     """Stream DraftKings websocket messages and persist odds."""
 
@@ -663,16 +634,23 @@ class WebsocketRunner(BaseRunner):
         per_min = events / event_runtime if event_runtime else 0.0
         per_sec = events / max((now - start), 0.1)
         hits = stats["hits"]
+        formatted_worker_runtime = f"{worker_runtime:,.2f}"
+        formatted_event_runtime = f"{event_runtime:,.0f}"
+        formatted_per_min = f"{per_min:,.2f}"
+        formatted_hits = f"{hits:,d}"
+        formatted_events = f"{events:,.0f}"
+        formatted_per_sec = f"{per_sec:,.1f}"
+
         self.log.info(
-            "%s\t%s\t%.2f worker mins.\t%.0f event mins.\t%.2f msgs/event min.\t%d hits\t%.0f msgs\t\t%.1f msgs/sec.%s",
+            "%s\t%s\t%s worker mins.\t%s event mins.\t%s msgs/event min.\t%s hits\t%s msgs\t\t%s msgs/sec.%s",
             CYAN,
             event,
-            worker_runtime,
-            event_runtime,
-            per_min,
-            hits,
-            events,
-            per_sec,
+            formatted_worker_runtime,
+            formatted_event_runtime,
+            formatted_per_min,
+            formatted_hits,
+            formatted_events,
+            formatted_per_sec,
             RESET,
         )
 
