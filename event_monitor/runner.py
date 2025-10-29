@@ -6,6 +6,7 @@ import contextlib
 import datetime as dt
 import logging
 import time
+from tzlocal import get_localzone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -31,6 +32,7 @@ class BaseRunner(abc.ABC):
         else:
             self.log = logging.getLogger(self.__class__.__name__)
         self.heartbeat_interval = heartbeat_interval
+        self.local_tz = get_localzone()
         self._last_heartbeat = time.time()
 
     @abc.abstractmethod
@@ -71,6 +73,7 @@ class BaseMonitor:
         output_dir: Path | None = None,
         concurrency: int = 0,
         log_color: str | None = None,
+        leagues: Sequence[str] | None = None,
     ) -> None:
         """Store directory paths, runner instance, and concurrency policy."""
 
@@ -84,6 +87,7 @@ class BaseMonitor:
             self.log = logging.getLogger(self.__class__.__name__)
         self.active_tasks: dict[str, asyncio.Task[None]] = {}
         self._semaphore = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
+        self._league_filter = {league.lower() for league in leagues} if leagues else None
 
     def event_key(self, event: Event) -> str:
         """Build a unique key used to track active runner tasks."""
@@ -104,7 +108,18 @@ class BaseMonitor:
     def _get_event_files(self) -> list[Path]:
         """Return the sorted list of snapshot files to inspect."""
 
-        return sorted(self.input_dir.glob(self.file_glob()))
+        files = sorted(self.input_dir.glob(self.file_glob()))
+        if not self._league_filter:
+            return files
+        filtered: list[Path] = []
+        for path in files:
+            try:
+                _, league = path.stem.split("-", 1)
+            except ValueError:
+                continue
+            if league.lower() in self._league_filter:
+                filtered.append(path)
+        return filtered
 
     async def _prune_tasks(self, active_ids: dict[str, set[str]]) -> None:
         """Stop runners whose associated events no longer appear live."""
@@ -173,9 +188,14 @@ class BaseMonitor:
 
         for file_path in files:
             try:
+                self.log.info("%s - loading event from %s", self.__class__.__name__, file_path)
                 league, events = load_events(file_path)
             except Exception as exc:  # pragma: no cover - guard for runtime errors
                 self.log.error("%s - failed to load %s: %s", self.__class__.__name__, file_path, exc)
+                continue
+
+            if self._league_filter and league.lower() not in self._league_filter:
+                self.log.warning("%s - skipping unsupported league: %s", self.__class__.__name__, league)
                 continue
 
             live_events = [event for event in events if self.should_monitor(event)]

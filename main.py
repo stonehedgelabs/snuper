@@ -3,32 +3,49 @@ from __future__ import annotations
 import argparse
 import asyncio
 import pathlib
+import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Protocol, Sequence
 
-from event_monitor import draftkings, fanduel, betmgm
+from dotenv import load_dotenv
+
+from event_monitor import betmgm, bovada, draftkings, fanduel
+from event_monitor.constants import Provider, SUPPORTED_LEAGUES
+
+load_dotenv()
+
+logger = logging.getLogger("event_monitor")
 
 
 class ScrapeRunner(Protocol):
-    async def __call__(self, output_dir: pathlib.Path) -> None: ...
+    async def __call__(
+        self,
+        output_dir: pathlib.Path,
+        *,
+        leagues: Sequence[str] | None = None,
+        overwrite: bool = False,
+    ) -> None: ...
 
 
 PROVIDER_ALIASES: dict[str, str] = {
     "draftkings": "draftkings",
     "betmgm": "betmgm",
-    # "fanduel": "fanduel",
+    "fanduel": "fanduel",
+    "bovada": "bovada",
 }
 
 PROVIDER_SCRAPE: dict[str, ScrapeRunner] = {
     "draftkings": draftkings.run_scrape,
     "betmgm": betmgm.run_scrape,
-    # "fanduel": fanduel.run_scrape,
+    "fanduel": fanduel.run_scrape,
+    "bovada": bovada.run_scrape,
 }
 
 PROVIDER_MONITOR: dict[str, Callable[..., Awaitable[None]]] = {
     "draftkings": draftkings.run_monitor,
     "betmgm": betmgm.run_monitor,
-    # "fanduel": fanduel.run_monitor,
+    "fanduel": fanduel.run_monitor,
+    "bovada": bovada.run_monitor,
 }
 
 
@@ -64,6 +81,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Operation to perform",
     )
     parser.add_argument(
+        "-l",
+        "--league",
+        choices=SUPPORTED_LEAGUES,
+        help="Limit the operation to a single league",
+    )
+    parser.add_argument(
         "-o",
         "--output-dir",
         type=pathlib.Path,
@@ -74,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--interval",
         type=int,
         help="Refresh interval in seconds (DraftKings monitor only)",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing snapshots instead of skipping",
     )
     return parser
 
@@ -91,23 +119,29 @@ async def dispatch(args: argparse.Namespace) -> None:
         providers = list(PROVIDER_SCRAPE.keys())
 
     task = args.task
+    leagues = [args.league] if args.league else None
 
     if task == "scrape":
         for provider in providers:
+            if provider == Provider.FanDuel.value:
+                logger.info("Skipping unsupported provider %s", provider)
+                continue
             runner = PROVIDER_SCRAPE[provider]
             provider_dir = args.output_dir / provider
-            await runner(provider_dir)
+            await runner(provider_dir, leagues=leagues, overwrite=args.overwrite)
         return
 
     monitor_tasks: list[Awaitable[None]] = []
     for provider in providers:
         runner = PROVIDER_MONITOR[provider]
         events_dir = args.output_dir / provider / "events"
-        if provider == "draftkings":
+        if provider == Provider.DraftKings.value:
             interval = args.interval or draftkings.DRAFTKINGS_DEFAULT_MONITOR_INTERVAL
-            monitor_tasks.append(runner(events_dir, interval=interval))
+            monitor_tasks.append(runner(events_dir, interval=interval, leagues=leagues))
+        elif provider == Provider.FanDuel.value:
+            logger.info("Skipping unsupported provider %s", provider)
         else:
-            monitor_tasks.append(runner(events_dir))
+            monitor_tasks.append(runner(events_dir, leagues=leagues))
 
     await asyncio.gather(*monitor_tasks)
 

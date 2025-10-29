@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import enum
+
 # Shared ANSI palette for structured logging
 CYAN = "\033[96m"
 """ANSI escape code for cyan log output."""
@@ -71,8 +73,8 @@ MAX_RUNNER_ERRORS = 5
 """Maximum consecutive runner errors tolerated before stopping."""
 
 MGM_LEAGUE_URLS = {
-    "nfl": "https://www.co.betmgm.com/en/sports/football-11/betting/usa-9/nfl-35",
-    "mlb": "https://www.co.betmgm.com/en/sports/baseball-23/betting/usa-9/mlb-75",
+    "nfl": "https://www.co.betmgm.com/en/sports/football-11/today",
+    "mlb": "https://www.co.betmgm.com/en/sports/baseball-23/today",
     "nba": "https://www.co.betmgm.com/en/sports/basketball-7/today",
 }
 """League index pages used to collect MGM event slugs."""
@@ -109,3 +111,105 @@ MGM_NBA_TEAMS = {
     "washington-wizards",
 }
 """Lowercase MGM team slugs that flag NBA events during filtering."""
+
+MGM_NFL_TEAMS = {
+    "arizona-cardinals",
+    "atlanta-falcons",
+    "baltimore-ravens",
+    "buffalo-bills",
+    "carolina-panthers",
+    "chicago-bears",
+    "cincinnati-bengals",
+    "cleveland-browns",
+    "dallas-cowboys",
+    "denver-broncos",
+    "detroit-lions",
+    "green-bay-packers",
+    "houston-texans",
+    "indianapolis-colts",
+    "jacksonville-jaguars",
+    "kansas-city-chiefs",
+    "las-vegas-raiders",
+    "los-angeles-chargers",
+    "los-angeles-rams",
+    "miami-dolphins",
+    "minnesota-vikings",
+    "new-england-patriots",
+    "new-orleans-saints",
+    "new-york-giants",
+    "new-york-jets",
+    "philadelphia-eagles",
+    "pittsburgh-steelers",
+    "san-francisco-49ers",
+    "seattle-seahawks",
+    "tampa-bay-buccaneers",
+    "tennessee-titans",
+    "washington-commanders",
+}
+"""Lowercase MGM team slugs that flag NFL events during filtering."""
+
+MGM_MLB_TEAMS = {
+    "arizona-diamondbacks",
+    "atlanta-braves",
+    "baltimore-orioles",
+    "boston-red-sox",
+    "chicago-cubs",
+    "chicago-white-sox",
+    "cincinnati-reds",
+    "cleveland-guardians",
+    "colorado-rockies",
+    "detroit-tigers",
+    "houston-astros",
+    "kansas-city-royals",
+    "los-angeles-angels",
+    "los-angeles-dodgers",
+    "miami-marlins",
+    "milwaukee-brewers",
+    "minnesota-twins",
+    "new-york-mets",
+    "new-york-yankees",
+    "oakland-athletics",
+    "philadelphia-phillies",
+    "pittsburgh-pirates",
+    "san-diego-padres",
+    "san-francisco-giants",
+    "seattle-mariners",
+    "st-louis-cardinals",
+    "tampa-bay-rays",
+    "texas-rangers",
+    "toronto-blue-jays",
+    "washington-nationals",
+}
+"""Lowercase MGM team slugs that flag MLB events during filtering."""
+
+
+class League(enum.Enum):
+    NBA = "nba"
+    MLB = "mlb"
+    NFL = "nfl"
+
+
+"""Sports leagues"""
+
+
+class Provider(enum.Enum):
+    DraftKings = "draftkings"
+    BetMGM = "betmgm"
+    FanDuel = "fanduel"
+    Bovada = "bovada"
+
+
+"""Sports data providers"""
+
+
+SPORTS = {
+    "nba": "basketball",
+    "mlb": "baseball",
+    "nfl": "football",
+}
+
+BOVADA_COMPEITION_IDS = {
+    "nba": "2958468",
+    "mlb": "8980269",
+    "nfl": "241",
+}

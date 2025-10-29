@@ -3,13 +3,13 @@ import datetime as dt
 import logging
 import re
 import pathlib
-from typing import Any
+from typing import Any, Sequence
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 from tzlocal import get_localzone
 
 from event_monitor.runner import BaseMonitor
-from event_monitor.scraper import BaseEventScraper
+from event_monitor.scraper import BaseEventScraper, ScrapeContext
 from event_monitor.t import Event
 
 CYAN = "\033[96m"
@@ -61,9 +61,9 @@ def parse_event_markets_fanduel(event_id: str) -> list[dict[str, Any]]:
 class EventScraper(BaseEventScraper):
     """Scrape FanDuel league listings to build event snapshots."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_dir: pathlib.Path | str | None = None) -> None:
         """Initialise league list, logger, and regex helpers."""
-        super().__init__(tuple(FANDUEL_LEAGUE_URLS.keys()))
+        super().__init__(tuple(FANDUEL_LEAGUE_URLS.keys()), output_dir=output_dir)
         self.local_tz = get_localzone()
         self.pattern_event_path = re.compile(
             r"^/(football|baseball)/[a-z]+/[a-z0-9\-@%]+-\d+$",
@@ -91,8 +91,13 @@ class EventScraper(BaseEventScraper):
 
         return _parse_team(away_part), _parse_team(home_part)
 
-    async def scrape_today(self, league: str) -> list[Event]:
+    async def scrape_today(
+        self,
+        context: ScrapeContext,
+        source_events: Sequence[Event] | None = None,
+    ) -> list[Event]:
         """Collect today's FanDuel events for the requested league."""
+        league = context.league
         base_url = FANDUEL_LEAGUE_URLS.get(league.lower())
         if not base_url:
             raise ValueError(f"Unsupported league: {league}")
@@ -154,7 +159,6 @@ class EventScraper(BaseEventScraper):
             await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(4000)
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
-            print(hrefs)
             await browser.close()
 
         # Filter for valid relative paths like /football/nfl/new-york-jets-@-cincinnati-bengals-34844525
@@ -194,7 +198,13 @@ class EventScraper(BaseEventScraper):
 class FanDuelMonitor(BaseMonitor):
     """Placeholder FanDuel monitor that will poll markets once implemented."""
 
-    def __init__(self, input_dir: pathlib.Path, concurrency: int = 10) -> None:
+    def __init__(
+        self,
+        input_dir: pathlib.Path,
+        concurrency: int = 10,
+        *,
+        leagues: Sequence[str] | None = None,
+    ) -> None:
         """Initialise paths and bookkeeping for future polling tasks."""
         # FanDuel monitor is not yet implemented
         raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
@@ -204,14 +214,23 @@ class FanDuelMonitor(BaseMonitor):
         raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
 
 
-async def run_scrape(output_dir: pathlib.Path) -> None:
+async def run_scrape(
+    output_dir: pathlib.Path,
+    *,
+    leagues: Sequence[str] | None = None,
+    overwrite: bool = False,
+) -> None:
     """Invoke the FanDuel scraper with the provided destination."""
 
-    scraper = EventScraper()
-    await scraper.scrape_and_save_all(output_dir)
+    scraper = EventScraper(output_dir)
+    await scraper.scrape_and_save_all(output_dir, leagues=leagues, overwrite=overwrite)
 
 
-async def run_monitor(input_dir: pathlib.Path) -> None:
+async def run_monitor(
+    input_dir: pathlib.Path,
+    *,
+    leagues: Sequence[str] | None = None,
+) -> None:
     """Execute the placeholder FanDuel monitor."""
 
     monitor = FanDuelMonitor(input_dir)

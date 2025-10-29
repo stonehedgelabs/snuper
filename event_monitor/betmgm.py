@@ -8,7 +8,7 @@ import zoneinfo
 import re
 import time
 import pathlib
-from typing import Any
+from typing import Any, Sequence
 from urllib.parse import urlparse, unquote
 
 import httpx
@@ -26,12 +26,14 @@ from event_monitor.constants import (
     MAX_IDLE_SECONDS,
     MGM_HEARTBEAT_SECONDS,
     MGM_NBA_TEAMS,
+    MGM_NFL_TEAMS,
+    MGM_MLB_TEAMS,
     MAX_RUNNER_ERRORS,
 )
 from event_monitor.runner import BaseMonitor, BaseRunner
-from event_monitor.scraper import BaseEventScraper, odds_filepath
+from event_monitor.scraper import BaseEventScraper, ScrapeContext
 from event_monitor.t import Event
-from event_monitor.utils import configure_colored_logger, decimal_to_american
+from event_monitor.utils import configure_colored_logger, decimal_to_american, odds_filepath
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,9 +45,9 @@ logger = configure_colored_logger(__name__, YELLOW)
 class BetMGMEventScraper(BaseEventScraper):
     """Scrape BetMGM pages to assemble daily event snapshots."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_dir: pathlib.Path | str | None = None) -> None:
         """Initialise timezone context, patterns, and league list."""
-        super().__init__(list(MGM_LEAGUE_URLS.keys()))
+        super().__init__(list(MGM_LEAGUE_URLS.keys()), output_dir=output_dir)
         self.local_tz = get_localzone()
         self.pattern_event_path = re.compile(
             r"^/en/sports/events/[a-z0-9\-@%]+-\d+$",
@@ -135,6 +137,16 @@ class BetMGMEventScraper(BaseEventScraper):
         url_lower = event_url.lower()
         return any(team in url_lower for team in MGM_NBA_TEAMS)
 
+    def _is_nfl_game(self, event_url: str) -> bool:
+        """Return True when the event URL references an NFL matchup."""
+        url_lower = event_url.lower()
+        return any(team in url_lower for team in MGM_NFL_TEAMS)
+
+    def _is_mlb_game(self, event_url: str) -> bool:
+        """Return True when the event URL references an MLB matchup."""
+        url_lower = event_url.lower()
+        return any(team in url_lower for team in MGM_MLB_TEAMS)
+
     def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Split the MGM slug into (away, home) team tokens."""
         slug = urlparse(event_url).path.split("/")[-1]
@@ -164,8 +176,13 @@ class BetMGMEventScraper(BaseEventScraper):
 
         return _parse_team(away_part), _parse_team(home_part)
 
-    async def scrape_today(self, league: str) -> list[Event]:
+    async def scrape_today(
+        self,
+        context: ScrapeContext,
+        source_events: Sequence[Event] | None = None,
+    ) -> list[Event]:
         """Return today's BetMGM events for the requested league."""
+        league = context.league
         base_url = MGM_LEAGUE_URLS.get(league.lower())
         if not base_url:
             raise ValueError(f"{self.__class__.__name__} - unsupported league: {league}")
@@ -197,21 +214,52 @@ class BetMGMEventScraper(BaseEventScraper):
 
             self.log.info("%s - navigating to %s", self.__class__.__name__, base_url)
             await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(4000)
-            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
+            await page.wait_for_timeout(10_000)
+            # hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
+            hrefs = await page.evaluate(
+                """
+() => {
+  const links = new Set();
 
+  // Normal <a href="..."> elements (resolved)
+  document.querySelectorAll('a[href]').forEach(e => {
+    if (e.href) links.add(e.href);
+  });
+
+  // Raw DOM attributes (some React links might set only data-href)
+  document.querySelectorAll('a').forEach(e => {
+    const raw = e.getAttribute('href');
+    if (raw && !raw.startsWith('javascript')) links.add(new URL(raw, document.baseURI).href);
+  });
+
+  // Elements with data-href or role=link (common in lazy-hydrated UIs)
+  document.querySelectorAll('[data-href], [role="link"]').forEach(e => {
+    const raw = e.getAttribute('data-href');
+    if (raw) links.add(new URL(raw, document.baseURI).href);
+  });
+
+  return Array.from(links);
+}
+"""
+            )
             event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
-            print(">>> events ", event_paths)
             event_urls = [self.base_domain + path for path in event_paths]
             if league == "nba":
                 event_urls = list(filter(lambda x: self._is_nba_game(x), event_urls))
+            elif league == "mlb":
+                event_urls = list(filter(lambda x: self._is_mlb_game(x), event_urls))
+            elif league == "nfl":
+                event_urls = list(filter(lambda x: self._is_nfl_game(x), event_urls))
+            else:
+                raise ValueError(f"{self.__class__.__name__} - unsupported league: {league}")
+
             self.log.info("%s - found %d event URLs on %s", self.__class__.__name__, len(event_urls), base_url)
 
             # Get today's date range in local timezone
             now_local = dt.datetime.now(self.local_tz)
             today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + dt.timedelta(days=1)
-            logger.info(
+            self.log.info(
                 "%s - MGM date window: Now(%s), Start(%s), End(%s)",
                 self.__class__.__name__,
                 now_local,
@@ -440,7 +488,16 @@ class PollingRunner(BaseRunner):
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(locale="en-US", extra_http_headers=headers)
+            context = await browser.new_context(
+                locale="en-US",
+                extra_http_headers=headers,
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/118.0.5993.117 Safari/537.36"
+                ),
+                viewport={"width": 1366, "height": 768},
+            )
             page = await context.new_page()
             await page.goto(event.url, wait_until="domcontentloaded", timeout=60000)
 
@@ -544,28 +601,45 @@ class PollingRunner(BaseRunner):
 class BetMGMMonitor(BaseMonitor):
     """Coordinate BetMGM polling runners based on saved snapshots."""
 
-    def __init__(self, input_dir: pathlib.Path, concurrency: int = 10) -> None:
+    def __init__(
+        self,
+        input_dir: pathlib.Path,
+        concurrency: int = 10,
+        *,
+        leagues: Sequence[str] | None = None,
+    ) -> None:
         """Initialise monitor state with snapshot directory and policy."""
         super().__init__(
             input_dir,
             PollingRunner(),
             concurrency=concurrency,
             log_color=YELLOW,
+            leagues=leagues,
         )
         self.log.info("%s - monitor using input directory at %s", self.__class__.__name__, self.input_dir)
 
 
-async def run_scrape(output_dir: pathlib.Path) -> None:
+async def run_scrape(
+    output_dir: pathlib.Path,
+    *,
+    leagues: Sequence[str] | None = None,
+    overwrite: bool = False,
+) -> None:
     """Invoke the BetMGM scraper with the supplied destination."""
 
-    scraper = BetMGMEventScraper()
-    await scraper.scrape_and_save_all(output_dir)
+    scraper = BetMGMEventScraper(output_dir)
+    await scraper.scrape_and_save_all(output_dir, leagues=leagues, overwrite=overwrite)
 
 
-async def run_monitor(input_dir: pathlib.Path, *, interval: int = MGM_MONITOR_SWEEP_INTERVAL) -> None:
+async def run_monitor(
+    input_dir: pathlib.Path,
+    *,
+    interval: int = MGM_MONITOR_SWEEP_INTERVAL,
+    leagues: Sequence[str] | None = None,
+) -> None:
     """Start BetMGM monitors and continue refreshing snapshot awareness."""
 
-    monitor = BetMGMMonitor(input_dir)
+    monitor = BetMGMMonitor(input_dir, leagues=leagues)
     logger.info("starting BetMGM monitor loop (interval=%ss)...", interval)
 
     while True:

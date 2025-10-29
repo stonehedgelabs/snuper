@@ -1,11 +1,38 @@
 import datetime as dt
 import json
 import logging
-import pathlib
+from pathlib import Path
 from typing import Optional
 
-from event_monitor.constants import RESET
+from event_monitor.constants import RESET, DATE_STAMP_FORMAT
 from event_monitor.t import Event
+
+
+def current_stamp(now: dt.datetime | None = None) -> str:
+    """Return the YYYYMMDD stamp used when naming snapshot files."""
+
+    current = now or dt.datetime.now()
+    return current.strftime(DATE_STAMP_FORMAT)
+
+
+def event_filepath(output_dir: Path, league: str, *, timestamp: str | None = None) -> Path:
+    """Build the filesystem path for an event snapshot JSON file."""
+
+    ts = timestamp or current_stamp()
+    return Path(output_dir) / "events" / f"{ts}-{league}.json"
+
+
+def odds_filepath(
+    output_dir: Path,
+    league: str,
+    event_id: str,
+    *,
+    timestamp: str | None = None,
+) -> Path:
+    """Build the filesystem path for an odds stream JSONL log."""
+
+    ts = timestamp or current_stamp()
+    return Path(output_dir) / "odds" / f"{ts}-{league}-{event_id}.json"
 
 
 def decimal_to_american(decimal_odds: str) -> str:
@@ -20,7 +47,7 @@ def decimal_to_american(decimal_odds: str) -> str:
         return None
 
 
-def load_events(file_path: pathlib.Path) -> tuple[str, list[Event]]:
+def load_events(file_path: Path) -> tuple[str, list[Event]]:
     """Read a JSON snapshot and return its league plus Event objects."""
     league = file_path.stem.split("-")[1]
     with open(file_path, "r", encoding="utf-8") as f:

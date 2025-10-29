@@ -9,15 +9,14 @@ import re
 import time
 import types
 import pathlib
-from typing import Any
+from typing import Any, Sequence
 from urllib.parse import urlparse, unquote
 
 import httpx
 import msgpack
 import websockets
-from dotenv import load_dotenv
 from playwright.async_api import async_playwright
-from tzlocal import get_localzone
+
 
 from event_monitor.constants import (
     CYAN,
@@ -35,11 +34,10 @@ from event_monitor.constants import (
     SUPPORTED_LEAGUES,
 )
 from event_monitor.runner import BaseMonitor, BaseRunner
-from event_monitor.scraper import BaseEventScraper, odds_filepath
+from event_monitor.scraper import BaseEventScraper, ScrapeContext
 from event_monitor.t import Event
-from event_monitor.utils import configure_colored_logger
+from event_monitor.utils import configure_colored_logger, odds_filepath
 
-load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [%(lineno)s]: %(message)s",
@@ -342,10 +340,9 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
 class DraftkingsEventScraper(BaseEventScraper):
     """Scrape DraftKings league pages for daily event metadata."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_dir: pathlib.Path | str | None = None) -> None:
         """Initialise helper patterns and timezone context."""
-        super().__init__(SUPPORTED_LEAGUES)
-        self.local_tz = get_localzone()
+        super().__init__(SUPPORTED_LEAGUES, output_dir=output_dir)
         self.pattern_event_url = re.compile(
             r"^https://sportsbook\.draftkings\.com/event/[a-z0-9\-@%]+/\d+$",
             re.IGNORECASE,
@@ -372,8 +369,13 @@ class DraftkingsEventScraper(BaseEventScraper):
 
         return _parse_team(away_part), _parse_team(home_part)
 
-    async def scrape_today(self, league: str) -> list[Event]:
+    async def scrape_today(
+        self,
+        context: ScrapeContext,
+        source_events: Sequence[Event] | None = None,
+    ) -> list[Event]:
         """Collect today's events for the league and attach spread markets."""
+        league = context.league
         url = DRAFTKINGS_LEAGUE_URLS[league]
         self.log.info(
             "%s - scraping league '%s', detected local timezone: %s", self.__class__.__name__, league, self.local_tz
@@ -453,7 +455,7 @@ class DraftkingsEventScraper(BaseEventScraper):
             await asyncio.sleep(0.5)
 
         events.sort(key=lambda g: g.start_time)
-        self.log.info("%s - total %d events for today.", self.__class__.__name__, len(events))
+        self.log.info("%s - saved %d total %s events for today.", self.__class__.__name__, len(events), league)
         return events
 
 
@@ -497,7 +499,6 @@ class WebsocketRunner(BaseRunner):
         )
         self.jwt = os.environ["DRAFTKINGS_WS_JWT"]
         self.url = DRAFTKINGS_WEBSOCKET_URL
-        self.local_tz = get_localzone()
 
     async def run(self, game: Event, output_dir: pathlib.Path, league: str) -> None:
         """Consume the websocket for ``game`` and append JSONL odds updates."""
@@ -678,28 +679,45 @@ class WebsocketRunner(BaseRunner):
 class DraftKingsMonitor(BaseMonitor):
     """Coordinate DraftKings websocket runners for live events."""
 
-    def __init__(self, input_dir: pathlib.Path, concurrency: int = 0) -> None:
+    def __init__(
+        self,
+        input_dir: pathlib.Path,
+        concurrency: int = 0,
+        *,
+        leagues: Sequence[str] | None = None,
+    ) -> None:
         """Initialise the monitor with the target snapshot directory."""
         super().__init__(
             input_dir,
             WebsocketRunner(),
             concurrency=concurrency,
             log_color=CYAN,
+            leagues=leagues,
         )
         self.log.info("%s - using input directory at %s", self.__class__.__name__, self.input_dir)
 
 
-async def run_scrape(output_dir: pathlib.Path) -> None:
+async def run_scrape(
+    output_dir: pathlib.Path,
+    *,
+    leagues: Sequence[str] | None = None,
+    overwrite: bool = False,
+) -> None:
     """Invoke the DraftKings scraper with the provided destination."""
 
-    scraper = DraftkingsEventScraper()
-    await scraper.scrape_and_save_all(output_dir)
+    scraper = DraftkingsEventScraper(output_dir)
+    await scraper.scrape_and_save_all(output_dir, leagues=leagues, overwrite=overwrite)
 
 
-async def run_monitor(input_dir: pathlib.Path, *, interval: int = DRAFTKINGS_DEFAULT_MONITOR_INTERVAL) -> None:
+async def run_monitor(
+    input_dir: pathlib.Path,
+    *,
+    interval: int = DRAFTKINGS_DEFAULT_MONITOR_INTERVAL,
+    leagues: Sequence[str] | None = None,
+) -> None:
     """Execute the DraftKings monitor loop with the configured interval."""
 
-    monitor = DraftKingsMonitor(input_dir)
+    monitor = DraftKingsMonitor(input_dir, leagues=leagues)
     logger.info("Starting persistent monitor (interval=%ss)...", interval)
     while True:
         try:
