@@ -32,7 +32,6 @@ from event_monitor.utils import (
     format_bytes,
     format_duration,
     format_rate_per_sec,
-    load_events,
 )
 
 __all__ = ["BovadaEventScraper", "BovadaMonitor", "run_scrape", "run_monitor"]
@@ -126,17 +125,14 @@ def is_league_matchup(path: str, league: str) -> bool:
 def extract_bovada_odds(data: dict):
     results = []
     for market in data.get("markets", []):
+        print(market.get("period", {}).get("description"))
+        print(market.get("period", {}).get("abbreviation"))
+        print(market.get("description"))
         if (
             market.get("period", {}).get("description") == "Live Game"
             and market.get("period", {}).get("abbreviation") == "G"
             and market.get("description") in {"Spread", "Moneyline"}
         ):
-            print(
-                market.get("period", {}).get("description") == "Live Game",
-                market.get("period", {}).get("abbreviation") == "G",
-                market.get("description") in {"Spread", "Moneyline"},
-            )
-            print(">>> HERE")
             for outcome in market.get("outcomes", []):
                 p = outcome.get("price", {})
                 results.append(
@@ -571,8 +567,7 @@ async def run_scrape(
 ) -> None:
     """Invoke the Bovada scraper with the destination directory."""
 
-    dk_root = output_dir.parent / "draftkings"
-    scraper = BovadaEventScraper(output_dir=output_dir, input_dir=dk_root, leagues=leagues)
+    scraper = BovadaEventScraper(output_dir=output_dir, leagues=leagues)
     await scraper.scrape_and_save_all(output_dir, leagues=leagues, overwrite=overwrite)
 
 

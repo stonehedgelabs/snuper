@@ -179,6 +179,7 @@ class BaseMonitor:
         """Inspect snapshot files, prune finished tasks, and start newcomers."""
 
         files = self._get_event_files()
+        self.log.info("%s - found %d files to potentially monitor", self.__class__.__name__, len(files))
         if not files:
             self.log.warning("%s - no event files found for today.", self.__class__.__name__)
             return

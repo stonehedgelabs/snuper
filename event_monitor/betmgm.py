@@ -3,21 +3,20 @@ import asyncio
 import datetime as dt
 import json
 import logging
-import os
 import zoneinfo
 import re
 import time
 import pathlib
 from typing import Any, Sequence
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 import httpx
 from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 from tzlocal import get_localzone
 
 from event_monitor.constants import (
     YELLOW,
-    RED,
     MGM_DEFAULT_MONITOR_INTERVAL,
     MGM_MONITOR_SWEEP_INTERVAL,
     MGM_EVENT_LOG_INTERVAL,
@@ -27,7 +26,9 @@ from event_monitor.constants import (
     MGM_NBA_TEAMS,
     MGM_NFL_TEAMS,
     MGM_MLB_TEAMS,
+    MGM_PAGE_LOAD_TIME,
     MAX_RUNNER_ERRORS,
+    League,
 )
 from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
@@ -48,6 +49,10 @@ logging.basicConfig(
 logger = configure_colored_logger(__name__, YELLOW)
 
 
+CDS_API_BASE = "https://www.co.betmgm.com/cds-api/bettingoffer/fixture-view"
+CDS_ACCESS_ID = "OTU4NDk3MzEtOTAyNS00MjQzLWIxNWEtNTI2MjdhNWM3Zjk3"  # static token from site
+
+
 class BetMGMEventScraper(BaseEventScraper):
     """Scrape BetMGM pages to assemble daily event snapshots."""
 
@@ -65,25 +70,17 @@ class BetMGMEventScraper(BaseEventScraper):
         """Parse the BetMGM DOM to determine the event's UTC start time."""
         try:
             # Wait for both elements to appear
-            await page.wait_for_selector(
-                "#main-view > ms-event-details-main > ds-card > ms-header > ms-header-content > ms-scoreboard > ms-prematch-scoreboard > div > div.header > div > span.time",
-                timeout=15000,
-            )
-            await page.wait_for_selector(
-                "#main-view > ms-event-details-main > ds-card > ms-header > ms-header-content > ms-scoreboard > ms-prematch-scoreboard > div > div.header > div > span.date",
-                timeout=15000,
-            )
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(5000)
+            await page.wait_for_selector(".event-time span.date", timeout=15000)
+            await page.wait_for_selector(".event-time span.time", timeout=15000)
 
             # Extract text contents via JS
             date_time_texts = await page.evaluate(
                 """
                 () => {
-                    const dateEl = document.querySelector(
-                        '#main-view > ms-event-details-main > ds-card > ms-header > ms-header-content > ms-scoreboard > ms-prematch-scoreboard > div > div.header > div > span.date'
-                    );
-                    const timeEl = document.querySelector(
-                        '#main-view > ms-event-details-main > ds-card > ms-header > ms-header-content > ms-scoreboard > ms-prematch-scoreboard > div > div.header > div > span.time'
-                    );
+                    const dateEl = document.querySelector('.event-time span.date');
+                    const timeEl = document.querySelector('.event-time span.time');
                     return {
                         date: dateEl ? dateEl.textContent.trim() : null,
                         time: timeEl ? timeEl.textContent.trim() : null
@@ -187,154 +184,148 @@ class BetMGMEventScraper(BaseEventScraper):
         context: ScrapeContext,
         source_events: Sequence[Event] | None = None,
     ) -> list[Event]:
-        """Return today's BetMGM events for the requested league."""
+        """Return today's BetMGM events for the requested league (robust interception version)."""
         league = context.league
-        base_url = MGM_LEAGUE_URLS.get(league.lower())
+        base_url = MGM_LEAGUE_URLS.get(league)
         if not base_url:
             raise ValueError(f"{self.__class__.__name__} - unsupported league: {league}")
 
         self.log.info(
-            "%s - scraping league '%s', detected local timezone: %s", self.__class__.__name__, league, self.local_tz
+            "%s - scraping league '%s', detected local timezone: %s",
+            self.__class__.__name__,
+            league,
+            self.local_tz,
         )
+
         events: list[Event] = []
 
-        headers = {
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "accept-language": "en-US,en;q=0.7",
-            "user-agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/140.0.0.0 Safari/537.36"
-            ),
-            "referer": "https://www.co.betmgm.com/",
-        }
-
-        async with async_playwright() as p:
+        async with Stealth().use_async(async_playwright()) as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 locale="en-US",
-                timezone_id="America/Los_Angeles",
-                extra_http_headers=headers,
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                timezone_id=getattr(self.local_tz, "key", str(self.local_tz)),
             )
             page = await context.new_page()
 
             self.log.info("%s - navigating to %s", self.__class__.__name__, base_url)
-            await page.goto(base_url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(10_000)
-            # hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
-            hrefs = await page.evaluate(
-                """
-() => {
-  const links = new Set();
+            await page.goto(base_url, wait_until="domcontentloaded", timeout=MGM_PAGE_LOAD_TIME)
+            await page.wait_for_timeout(MGM_PAGE_LOAD_TIME)
 
-  // Normal <a href="..."> elements (resolved)
-  document.querySelectorAll('a[href]').forEach(e => {
-    if (e.href) links.add(e.href);
-  });
-
-  // Raw DOM attributes (some React links might set only data-href)
-  document.querySelectorAll('a').forEach(e => {
-    const raw = e.getAttribute('href');
-    if (raw && !raw.startsWith('javascript')) links.add(new URL(raw, document.baseURI).href);
-  });
-
-  // Elements with data-href or role=link (common in lazy-hydrated UIs)
-  document.querySelectorAll('[data-href], [role="link"]').forEach(e => {
-    const raw = e.getAttribute('data-href');
-    if (raw) links.add(new URL(raw, document.baseURI).href);
-  });
-
-  return Array.from(links);
-}
-"""
-            )
+            # Collect all event URLs
+            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
             event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
             event_urls = [self.base_domain + path for path in event_paths]
-            if league == "nba":
-                event_urls = list(filter(lambda x: self._is_nba_game(x), event_urls))
-            elif league == "mlb":
-                event_urls = list(filter(lambda x: self._is_mlb_game(x), event_urls))
-            elif league == "nfl":
-                event_urls = list(filter(lambda x: self._is_nfl_game(x), event_urls))
+
+            # Filter per-league
+            if league == League.NBA.value:
+                event_urls = [x for x in event_urls if self._is_nba_game(x)]
+            elif league == League.MLB.value:
+                event_urls = [x for x in event_urls if self._is_mlb_game(x)]
+            elif league == League.NFL.value:
+                event_urls = [x for x in event_urls if self._is_nfl_game(x)]
             else:
                 raise ValueError(f"{self.__class__.__name__} - unsupported league: {league}")
 
-            self.log.info("%s - found %d event URLs on %s", self.__class__.__name__, len(event_urls), base_url)
+            self.log.info("%s - found %d event URLs", self.__class__.__name__, len(event_urls))
 
-            # Get today's date range in local timezone
+            # Define date window
             now_local = dt.datetime.now(self.local_tz)
             today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + dt.timedelta(days=1)
-            self.log.info(
-                "%s - MGM date window: Now(%s), Start(%s), End(%s)",
-                self.__class__.__name__,
-                now_local,
-                today_start,
-                today_end,
-            )
 
+            # Iterate events and intercept their fixture JSONs
             for event_url in event_urls:
+                event_id = event_url.split("-")[-1]
+                fixture_data = {}
+
+                async def capture_fixture_response(response):
+                    url = response.url
+                    if "fixture-view" in url and f"fixtureIds={event_id}" in url:
+                        try:
+                            data = await response.json()
+                            fixture_data.update(data)
+                            self.log.info("%s - captured fixture JSON for %s", self.__class__.__name__, event_id)
+                        except Exception as e:
+                            self.log.warning(
+                                "%s - failed to decode fixture %s: %s", self.__class__.__name__, event_id, e
+                            )
+
+                page.on("response", capture_fixture_response)
+
                 try:
                     self.log.info("%s - navigating to event: %s", self.__class__.__name__, event_url)
                     await page.goto(event_url, wait_until="domcontentloaded", timeout=45000)
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(4000)  # allow lazy requests
 
-                    start_time = await self.extract_start_time(page)
+                    # Wait for capture or timeout
+                    for _ in range(10):
+                        if fixture_data:
+                            break
+                        await asyncio.sleep(1)
 
-                    # Skip if we couldn't get start time
-                    if not start_time:
-                        self.log.warning("%s - skipping event %s - no start time", self.__class__.__name__, event_url)
+                    if not fixture_data:
+                        self.log.warning("%s - no fixture JSON captured for %s", self.__class__.__name__, event_id)
                         continue
 
-                    # Convert to local timezone for comparison
-                    start_time_local = start_time.astimezone(self.local_tz)
-                    self.log.info(
-                        "%s - MGM start time conversion: UTC(%s) -> Local(%s)",
-                        self.__class__.__name__,
-                        start_time,
-                        start_time_local,
-                    )
-
-                    # Filter: only include games starting today (in local timezone)
-                    if not (today_start <= start_time_local < today_end):
-                        local_str = start_time_local.strftime("%Y-%m-%d %I:%M %p %Z")
-                        self.log.info(
-                            "%s - skipping event %s - not starting today (starts %s)",
-                            self.__class__.__name__,
-                            event_url,
-                            local_str,
-                        )
+                    fixture = fixture_data.get("fixtures", [{}])[0]
+                    start_str = fixture.get("startDate")
+                    if not start_str:
+                        self.log.warning("%s - fixture %s missing startDate", self.__class__.__name__, event_id)
                         continue
 
-                    local_str = start_time_local.strftime("%Y-%m-%d %I:%M %p %Z")
-                    self.log.info(
-                        "%s - extracted start time for %s: %s (%s)",
-                        self.__class__.__name__,
-                        event_url,
-                        start_time,
-                        local_str,
-                    )
+                    start_time = dt.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    start_local = start_time.astimezone(self.local_tz)
+                    if not (today_start <= start_local < today_end):
+                        self.log.info("%s - skipping %s (starts %s)", self.__class__.__name__, event_id, start_local)
+                        continue
 
-                    event_id = event_url.split("-")[-1]
-                    away, home = self.extract_team_info(event_url) or (
-                        ("?", "?"),
-                        ("?", "?"),
-                    )
+                    participants = fixture.get("participants", [])
+                    if len(participants) >= 2:
+                        away_name = participants[0]["name"]
+                        home_name = participants[1]["name"]
+                    else:
+                        away_name, home_name = "?", "?"
+
+                    # Extract selections
                     selections = []
+                    for market in fixture.get("optionMarkets", []):
+                        mname = market.get("name", {}).get("value")
+                        for opt in market.get("options", []):
+                            price = opt.get("price", {})
+                            selections.append(
+                                {
+                                    "selection_id": opt.get("id"),
+                                    "market_id": market.get("id"),
+                                    "event_id": event_id,
+                                    "market_name": mname,
+                                    "marketType": mname,
+                                    "label": opt.get("name", {}).get("value"),
+                                    "odds_american": price.get("americanOdds"),
+                                    "odds_decimal": price.get("odds"),
+                                    "participant": opt.get("name", {}).get("value"),
+                                }
+                            )
+
                     events.append(
                         Event(
                             event_id,
                             league,
                             event_url,
                             start_time,
-                            away,
-                            home,
+                            (away_name, ""),
+                            (home_name, ""),
                             selections,
                         )
                     )
+                    self.log.info("%s - added %s (%d selections)", self.__class__.__name__, event_id, len(selections))
 
                 except Exception as e:
-                    self.log.warning("%s - error scraping %s: %s", self.__class__.__name__, event_url, e)
+                    self.log.warning("%s - error processing %s: %s", self.__class__.__name__, event_url, e)
                     continue
 
             await browser.close()
@@ -386,7 +377,7 @@ def transform_markets_to_records(event: Event, markets: list[dict]) -> list[Sele
     return changes
 
 
-class BetMGMMonitor(BaseRunner):
+class BetMGMRunner(BaseRunner):
     """Poll BetMGM event pages for odds updates on an interval."""
 
     def __init__(self) -> None:
@@ -490,7 +481,7 @@ class BetMGMMonitor(BaseRunner):
                 "bytes_received": total_bytes,
             }
 
-        async with async_playwright() as p:
+        async with Stealth().use_async(async_playwright()) as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 locale="en-US",
@@ -616,7 +607,7 @@ class BetMGMMonitor(BaseMonitor):
         """Initialise monitor state with snapshot directory and policy."""
         super().__init__(
             input_dir,
-            PollingRunner(),
+            BetMGMRunner(),
             concurrency=concurrency,
             log_color=YELLOW,
             leagues=leagues,

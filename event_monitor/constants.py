@@ -74,6 +74,9 @@ DRAFTKINGS_LEAGUE_URLS = {
 MGM_DEFAULT_MONITOR_INTERVAL = 1
 """Seconds between successive MGM page reloads while polling."""
 
+MGM_PAGE_LOAD_TIME = 5_000
+"""Milliseconds to wait for page load time in Playwright"""
+
 MGM_MONITOR_SWEEP_INTERVAL = 30
 """Seconds between BetMGM monitor sweeps of stored event snapshots."""
 

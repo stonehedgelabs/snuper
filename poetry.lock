@@ -476,6 +476,21 @@ greenlet = ">=3.1.1,<4.0.0"
 pyee = ">=13,<14"
 
 [[package]]
+name = "playwright-stealth"
+version = "2.0.0"
+description = "Make your playwright instance stealthy"
+optional = false
+python-versions = "<4.0,>=3.9"
+groups = ["main"]
+files = [
+    {file = "playwright_stealth-2.0.0-py3-none-any.whl", hash = "sha256:9eb3af1fd21619aac9fdd13a4a08141ed67159ac6310a94f7d2f758ba0cbe179"},
+    {file = "playwright_stealth-2.0.0.tar.gz", hash = "sha256:4f44d416d4226689895a4d1cfb40e8d137216c0c9710ea8f84bae2dbf1186fc5"},
+]
+
+[package.dependencies]
+playwright = ">=1.0.0,<2.0.0"
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 description = "plugin and hook calling mechanisms for python"
@@ -892,5 +907,5 @@ dev = ["black", "pytest", "pytest-asyncio"]
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.12"
-content-hash = "b5291df2bf876a75ef73c5237e204fd9cc0323e3cb0a3ac0426933d724975f0f"
+python-versions = ">=3.12,<4.0"
+content-hash = "e921d6aabe2e06eb317873963165a784dd5b954ecfebc6c466932c1f391e5339"
