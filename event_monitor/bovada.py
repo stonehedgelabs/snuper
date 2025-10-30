@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import logging
+import asyncio
 import datetime as dt
+import json
+import logging
+import time
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import httpx
+import websockets
 
 from event_monitor.constants import (
     CYAN,
@@ -14,11 +18,22 @@ from event_monitor.constants import (
     MGM_MLB_TEAMS,
     MGM_NFL_TEAMS,
     League,
+    MAX_RUNNER_ERRORS,
+    BOVADA_EVENT_LOG_INTERVAL,
+    BOVADA_HEARTBEAT_SECONDS,
+    BOVADA_WEBSOCKET_URL,
+    BOVADA_MAX_TIME_SINCE_LAST_EVENT,
 )
-from event_monitor.runner import BaseMonitor
+from event_monitor.runner import BaseMonitor, BaseRunner
 from event_monitor.scraper import BaseEventScraper, ScrapeContext
 from event_monitor.t import Event
-from event_monitor.utils import configure_colored_logger, load_events, event_filepath
+from event_monitor.utils import (
+    configure_colored_logger,
+    format_bytes,
+    format_duration,
+    format_rate_per_sec,
+    load_events,
+)
 
 __all__ = ["BovadaEventScraper", "BovadaMonitor", "run_scrape", "run_monitor"]
 
@@ -106,6 +121,41 @@ def is_league_matchup(path: str, league: str) -> bool:
     # Count how many known teams appear in this slug
     matched_teams = [team for team in league_teams if team in slug]
     return len(matched_teams) == 2
+
+
+def extract_bovada_odds(data: dict):
+    results = []
+    for market in data.get("markets", []):
+        if (
+            market.get("period", {}).get("description") == "Live Game"
+            and market.get("period", {}).get("abbreviation") == "G"
+            and market.get("description") in {"Spread", "Moneyline"}
+        ):
+            print(
+                market.get("period", {}).get("description") == "Live Game",
+                market.get("period", {}).get("abbreviation") == "G",
+                market.get("description") in {"Spread", "Moneyline"},
+            )
+            print(">>> HERE")
+            for outcome in market.get("outcomes", []):
+                p = outcome.get("price", {})
+                results.append(
+                    {
+                        "selection_id": outcome.get("id"),
+                        "market_id": market.get("id"),
+                        "event_id": outcome.get("id"),
+                        "market_name": outcome.get("description"),
+                        "marketType": outcome.get("description"),
+                        "label": outcome.get("description"),
+                        "odds_american": p.get("american"),
+                        "odds_decimal": p.get("decimal"),
+                        "spread_or_line": p.get("handicap"),
+                        "bet_type": outcome.get("description").lower(),
+                        "participant": outcome.get("description"),
+                        "match": "market_name",
+                    }
+                )
+    return results
 
 
 class BovadaEventScraper(BaseEventScraper):
@@ -226,7 +276,7 @@ class BovadaEventScraper(BaseEventScraper):
 
                     if not selections:
                         self.log.warning("%s - no selections found", self.__class__.__name__)
-                        continue
+                        return selections
 
                     # Build event URL
                     event_link = ev.get("link", "")
@@ -263,20 +313,254 @@ class BovadaEventScraper(BaseEventScraper):
         return results
 
 
+class BovadaRunner(BaseRunner):
+    """Stream Bovada websocket messages and emit raw payload logs."""
+
+    def __init__(self) -> None:
+        super().__init__(heartbeat_interval=BOVADA_HEARTBEAT_SECONDS, log_color=CYAN)
+        self.url = BOVADA_WEBSOCKET_URL
+        self.headers = {
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "no-cache",
+            "connection": "Upgrade",
+            "host": "services.bovada.lv",
+            "origin": "https://www.bovada.lv",
+            "pragma": "no-cache",
+            "sec-websocket-extensions": "permessage-deflate; client_max_window_bits",
+            "sec-websocket-version": "13",
+            "upgrade": "websocket",
+            "user-agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/141.0.0.0 Safari/537.36"
+            ),
+        }
+
+    async def run(self, event: Event, output_dir: Path, league: str) -> None:  # noqa: ARG002
+        """Consume the Bovada websocket, subscribe to one event_id, and log plaintext frames."""
+
+        start = time.time()
+        events = 0
+        odds_hits = 0
+        total_bytes = 0
+        last_event_time = time.time()
+        error_count = 0
+        self.reset_heartbeat()
+
+        # subscribe_payload = f"SUBSCRIBE|A|/events/18621073.1761785145345?delta=true"
+        subscribe_payload = f"SUBSCRIBE|A|/events/18621073.1?delta=true"
+        unsubscribe_payload = f"UNSUBSCRIBE|{event.event_id}"
+
+        def current_stats() -> dict[str, Any]:
+            return {
+                "start": start,
+                "events": events,
+                "hits": odds_hits,
+                "bytes_received": total_bytes,
+                "event_start": event.start_time,
+            }
+
+        while True:
+            task = asyncio.current_task()
+            if task and task.cancelled():
+                self.log.info(
+                    "%s - websocket runner for %s cancelled, shutting down.",
+                    self.__class__.__name__,
+                    event,
+                )
+                break
+
+            try:
+                self.log.info("%s - connecting websocket for %s", self.__class__.__name__, event)
+                async with websockets.connect(
+                    self.url,
+                    extra_headers=self.headers,
+                    max_size=None,
+                ) as ws:
+                    error_count = 0
+                    self.log.info(
+                        "%s - connected to Bovada stream for %s",
+                        self.__class__.__name__,
+                        event,
+                    )
+
+                    # Send subscription message for this single event
+                    await ws.send(subscribe_payload)
+                    self.log.info(
+                        "%s - sent subscribe payload: %s",
+                        self.__class__.__name__,
+                        subscribe_payload,
+                    )
+
+                    try:
+                        while True:
+                            if time.time() - last_event_time > BOVADA_MAX_TIME_SINCE_LAST_EVENT:
+                                self.log.info(
+                                    "%s - no updates for %d seconds; assuming %s has ended.",
+                                    self.__class__.__name__,
+                                    BOVADA_MAX_TIME_SINCE_LAST_EVENT,
+                                    event,
+                                )
+                                await ws.send(unsubscribe_payload)
+                                return
+
+                            task = asyncio.current_task()
+                            if task and task.cancelled():
+                                self.log.warning(
+                                    "%s - websocket runner for %s cancelled mid-loop.",
+                                    self.__class__.__name__,
+                                    event,
+                                )
+                                await ws.send(unsubscribe_payload)
+                                return
+
+                            try:
+                                msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                            except asyncio.TimeoutError:
+                                self.maybe_emit_heartbeat(event, stats=current_stats())
+                                continue
+
+                            if isinstance(msg, bytes):
+                                payload_bytes = msg
+                                payload_text = payload_bytes.decode("utf-8", errors="replace")
+                            else:
+                                payload_text = msg
+                                payload_bytes = payload_text.encode("utf-8")
+
+                            if "|" not in payload_text:
+                                preview = payload_text.strip()
+                                if len(preview) > 200:
+                                    preview = f"{preview[:200]}..."
+                                self.log.warning(
+                                    "%s - no header in payload: %s",
+                                    self.__class__.__name__,
+                                    preview or "<empty>",
+                                )
+                                continue
+
+                            header, body = payload_text.split("|", 1)
+                            msg_data = json.loads(body)
+
+                            hits = extract_bovada_odds(msg_data)
+                            if hits:
+                                odds_hits += len(hits)
+                                last_event_time = time.time()
+
+                            total_bytes += len(payload_bytes)
+                            events += 1
+                            stats = current_stats()
+                            if events % BOVADA_EVENT_LOG_INTERVAL == 0 and events > 0:
+                                self.maybe_emit_heartbeat(event, force=True, stats=stats)
+
+                            self.maybe_emit_heartbeat(event, stats=stats)
+
+                    finally:
+                        try:
+                            await ws.send(unsubscribe_payload)
+                            self.log.info(
+                                "%s - sent unsubscribe payload: %s",
+                                self.__class__.__name__,
+                                unsubscribe_payload,
+                            )
+                        except Exception as exc:
+                            self.log.warning(
+                                "%s - failed to send unsubscribe for %s: %s",
+                                self.__class__.__name__,
+                                event,
+                                exc,
+                            )
+
+            except (
+                websockets.exceptions.ConnectionClosedError,
+                websockets.exceptions.ConnectionClosedOK,
+                ConnectionResetError,
+            ) as exc:
+                error_count += 1
+                self.log.warning(
+                    "%s - websocket disconnected (%s): %s. Reconnecting in 3s...",
+                    self.__class__.__name__,
+                    event,
+                    exc,
+                )
+                if error_count > MAX_RUNNER_ERRORS:
+                    stats = current_stats()
+                    self.log.error(
+                        "%s - assuming game ended for %s after %d consecutive websocket errors.",
+                        self.__class__.__name__,
+                        event,
+                        error_count,
+                    )
+                    self.maybe_emit_heartbeat(event, force=True, stats=stats)
+                    break
+                await asyncio.sleep(3)
+                continue
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                error_count += 1
+                self.log.error(
+                    "%s - unexpected websocket error (%s): %s",
+                    self.__class__.__name__,
+                    event,
+                    exc,
+                )
+                if error_count > MAX_RUNNER_ERRORS:
+                    stats = current_stats()
+                    self.log.error(
+                        "%s - assuming game ended for %s after %d consecutive runner errors.",
+                        self.__class__.__name__,
+                        event,
+                        error_count,
+                    )
+                    self.maybe_emit_heartbeat(event, force=True, stats=stats)
+                    break
+                await asyncio.sleep(5)
+
+    def emit_heartbeat(self, event: Event, *, stats: dict[str, Any]) -> None:
+        """Emit heartbeat JSON describing websocket throughput."""
+
+        start = stats.get("start", time.time())
+        events = int(stats.get("events", 0))
+        hits = int(stats.get("hits", 0))
+        bytes_received = int(stats.get("bytes_received", 0))
+        event_start: dt.datetime = stats.get("event_start", event.start_time)
+
+        now = time.time()
+        now_utc = dt.datetime.now(dt.timezone.utc)
+        worker_elapsed = max(now - start, 0.0)
+        event_elapsed = max((now_utc - event_start).total_seconds(), 0.0)
+
+        payload = {
+            "event": str(event),
+            "worker_time": format_duration(worker_elapsed),
+            "event_runtime": format_duration(event_elapsed),
+            "msgs_rcvd": f"{events:,d}",
+            "msgs_rcvd_per_sec": format_rate_per_sec(events, worker_elapsed),
+            "total_bytes_rcvd": format_bytes(bytes_received),
+            "odds_rcvd": f"{hits:,d}",
+            "odds_rcvd_per_sec": format_rate_per_sec(hits, worker_elapsed),
+        }
+
+        self.log.info("%s - %s", self.__class__.__name__, json.dumps(payload, separators=(",", ":")))
+
+
 class BovadaMonitor(BaseMonitor):
-    """Placeholder Bovada monitor that will stream odds once built."""
+    """Coordinate Bovada websocket runners for live events."""
 
     def __init__(
         self,
         input_dir: Path,
-        concurrency: int = 10,
+        concurrency: int = 0,
         *,
         leagues: Sequence[str] | None = None,
     ) -> None:
-        raise NotImplementedError("TODO: Implement Bovada live polling monitor")
-
-    async def run_once(self) -> None:
-        raise NotImplementedError("TODO: Implement Bovada live polling monitor")
+        super().__init__(
+            input_dir,
+            BovadaRunner(),
+            concurrency=concurrency,
+            log_color=CYAN,
+            leagues=leagues,
+        )
+        self.log.info("%s - using input directory at %s", self.__class__.__name__, self.input_dir)
 
 
 async def run_scrape(
@@ -296,8 +580,16 @@ async def run_monitor(
     input_dir: Path,
     *,
     leagues: Sequence[str] | None = None,
+    interval: int = BOVADA_HEARTBEAT_SECONDS,
 ) -> None:
-    """Execute the Bovada monitor against ``input_dir`` when available."""
+    """Run the Bovada monitor in a persistent sweep loop."""
 
-    monitor = BovadaMonitor(input_dir)
-    await monitor.run_once()
+    monitor = BovadaMonitor(input_dir, leagues=leagues)
+    logger.info("starting Bovada monitor loop (interval=%ss)...", interval)
+
+    while True:
+        try:
+            await monitor.run_once()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Bovada monitor sweep failed: %s", exc)
+        await asyncio.sleep(interval)

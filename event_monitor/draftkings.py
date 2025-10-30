@@ -467,7 +467,7 @@ class DraftkingsEventScraper(BaseEventScraper):
         return events
 
 
-class WebsocketRunner(BaseRunner):
+class DraftKingsRunner(BaseRunner):
     """Stream DraftKings websocket messages and persist odds."""
 
     def __init__(self) -> None:
@@ -662,7 +662,7 @@ class WebsocketRunner(BaseRunner):
             "odds_rcvd_per_sec": format_rate_per_sec(hits, worker_elapsed),
         }
 
-        self.log.info(json.dumps(payload, separators=(",", ":")))
+        self.log.info("%s - %s", self.__class__.__name__, json.dumps(payload, separators=(",", ":")))
 
 
 class DraftKingsMonitor(BaseMonitor):
@@ -678,7 +678,7 @@ class DraftKingsMonitor(BaseMonitor):
         """Initialise the monitor with the target snapshot directory."""
         super().__init__(
             input_dir,
-            WebsocketRunner(),
+            DraftKingsRunner(),
             concurrency=concurrency,
             log_color=CYAN,
             leagues=leagues,

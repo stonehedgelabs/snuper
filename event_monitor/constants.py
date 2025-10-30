@@ -31,6 +31,23 @@ GAME_RUNTIME_SECONDS = 14400
 DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
 """Primary DraftKings websocket endpoint for odds streaming."""
 
+# Bovada configuration
+BOVADA_WEBSOCKET_URL = (
+    "wss://services.bovada.lv/services/sports/subscription/71908712-7357-0123-5739-564427734220"
+    "?X-Atmosphere-tracking-id=0&X-Atmosphere-Framework=3.1.0-javascript"
+    "&X-Atmosphere-Transport=websocket"
+)
+"""Primary Bovada websocket endpoint for odds streaming."""
+
+BOVADA_EVENT_LOG_INTERVAL = 500
+"""Frequency for heartbeat logging of Bovada websocket events."""
+
+BOVADA_HEARTBEAT_SECONDS = 60
+"""Seconds between forced heartbeat logs for Bovada events."""
+
+BOVADA_MAX_TIME_SINCE_LAST_EVENT = 60 * 30
+"""Number of idle seconds tolerated before assuming a Bovada game ended."""
+
 DRAFTKINGS_SPREAD_MARKET_TYPE = "Spread"
 """DraftKings market type identifier used when filtering spreads."""
 

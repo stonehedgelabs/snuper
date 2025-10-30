@@ -386,7 +386,7 @@ def transform_markets_to_records(event: Event, markets: list[dict]) -> list[Sele
     return changes
 
 
-class PollingRunner(BaseRunner):
+class BetMGMMonitor(BaseRunner):
     """Poll BetMGM event pages for odds updates on an interval."""
 
     def __init__(self) -> None:
@@ -600,7 +600,7 @@ class PollingRunner(BaseRunner):
             "odds_rcvd_per_sec": format_rate_per_sec(hits, worker_elapsed),
         }
 
-        self.log.info(json.dumps(payload, separators=(",", ":")))
+        self.log.info("%s - %s", self.__class__.__name__, json.dumps(payload, separators=(",", ":")))
 
 
 class BetMGMMonitor(BaseMonitor):

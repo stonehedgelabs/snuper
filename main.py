@@ -56,11 +56,42 @@ def canonical_provider(value: str) -> str:
         raise ValueError(f"Unknown provider alias: {value}") from exc
 
 
-def provider_argument(value: str) -> str:
-    try:
-        return canonical_provider(value)
-    except ValueError as exc:  # pragma: no cover - defensive guard
-        raise argparse.ArgumentTypeError(str(exc)) from exc
+def provider_argument(value: str) -> list[str]:
+    items = [chunk.strip() for chunk in value.split(",")]
+    providers: list[str] = []
+
+    for item in items:
+        if not item:
+            continue
+        try:
+            canonical = canonical_provider(item)
+        except ValueError as exc:  # pragma: no cover - defensive guard
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+        if canonical not in providers:
+            providers.append(canonical)
+
+    if not providers:
+        raise argparse.ArgumentTypeError("No providers supplied")
+
+    return providers
+
+
+def league_argument(value: str) -> list[str]:
+    items = [chunk.strip().lower() for chunk in value.split(",")]
+    leagues: list[str] = []
+
+    for item in items:
+        if not item:
+            continue
+        if item not in SUPPORTED_LEAGUES:
+            raise argparse.ArgumentTypeError(f"Unsupported league: {item}")
+        if item not in leagues:
+            leagues.append(item)
+
+    if not leagues:
+        raise argparse.ArgumentTypeError("No leagues supplied")
+
+    return leagues
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,8 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-p",
         "--provider",
         type=provider_argument,
-        choices=sorted(PROVIDER_SCRAPE.keys()),
-        help="Target sportsbook provider (omit to run all)",
+        help="Comma-separated list of sportsbook providers (omit to run all)",
     )
     parser.add_argument(
         "-t",
@@ -83,8 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-l",
         "--league",
-        choices=SUPPORTED_LEAGUES,
-        help="Limit the operation to a single league",
+        type=league_argument,
+        help="Comma-separated list of leagues to limit (omit for all)",
     )
     parser.add_argument(
         "-o",
@@ -112,14 +142,13 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 async def dispatch(args: argparse.Namespace) -> None:
-    providers: list[str]
     if args.provider:
-        providers = [args.provider]
+        providers = list(args.provider)
     else:
         providers = list(PROVIDER_SCRAPE.keys())
 
     task = args.task
-    leagues = [args.league] if args.league else None
+    leagues = list(args.league) if args.league else None
 
     if task == "scrape":
         for provider in providers:

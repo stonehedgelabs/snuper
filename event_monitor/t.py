@@ -25,7 +25,7 @@ class Event:
         """Store identifying metadata and cached selections for an event."""
 
         self.event_id = event_id
-        self.league = league
+        self.league = league.lower()
         self.url = url
         self.start_time = start_time
         self.away = away
