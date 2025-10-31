@@ -31,7 +31,7 @@ GAME_RUNTIME_SECONDS = 14400
 DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
 """Primary DraftKings websocket endpoint for odds streaming."""
 
-BOVADA_EVENT_LOG_INTERVAL = 10
+BOVADA_EVENT_LOG_INTERVAL = 25
 """Frequency for heartbeat logging of Bovada websocket events."""
 
 BOVADA_HEARTBEAT_SECONDS = 60

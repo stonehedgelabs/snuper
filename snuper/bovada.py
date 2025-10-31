@@ -26,12 +26,13 @@ from snuper.constants import (
 )
 from snuper.runner import BaseMonitor, BaseRunner
 from snuper.scraper import BaseEventScraper, ScrapeContext
-from snuper.t import Event
+from snuper.t import Event, Selection, SelectionChange
 from snuper.utils import (
     configure_colored_logger,
     format_bytes,
     format_duration,
     format_rate_per_sec,
+    odds_filepath,
 )
 
 __all__ = ["BovadaEventScraper", "BovadaMonitor", "run_scrape", "run_monitor"]
@@ -43,11 +44,12 @@ logging.basicConfig(
 )
 logger = configure_colored_logger(__name__, CYAN)
 
+
+all_market_period_descrs = set()
+all_market_period_abbrvs = set()
+all_market_descriptions = set()
+
 event_headers = {
-    # ":authority": "www.bovada.lv",
-    # ":method": "GET",
-    # ":path": "/services/sports/event/coupon/events/A/description/basketball?marketFilterId=def&liveOnly=true&eventsLimit=50&lang=en",
-    # ":scheme": "https",
     "accept": "application/json, text/plain, */*",
     "accept-encoding": "gzip, deflate, br, zstd",
     "accept-language": "en-US,en;q=0.9",
@@ -129,16 +131,16 @@ def is_league_matchup(path: str, league: str) -> bool:
     return len(matched_teams) == 2
 
 
-def extract_bovada_odds(data: dict, league: str) -> dict:
+def extract_bovada_odds(event_id: str, data: dict, league: str) -> dict:
     results = []
     for market in data.get("markets", []):
-        print(market.get("period", {}).get("description"))
-        print(market.get("period", {}).get("abbreviation"))
-        print(market.get("description"))
+        all_market_period_descrs.add(market.get("period", {}).get("abbreviation"))
+        all_market_period_abbrvs.add(market.get("period", {}).get("description"))
+        all_market_descriptions.add(market.get("description"))
         if (
             market.get("period", {}).get("description") == description_filter(league)
             and market.get("period", {}).get("abbreviation") == "G"
-            and market.get("description") in {"Spread", "Moneyline"}
+            and market.get("description") in {"Spread", "Point Spread", "Moneyline"}
         ):
             for outcome in market.get("outcomes", []):
                 p = outcome.get("price", {})
@@ -146,14 +148,14 @@ def extract_bovada_odds(data: dict, league: str) -> dict:
                     {
                         "selection_id": outcome.get("id"),
                         "market_id": market.get("id"),
-                        "event_id": outcome.get("id"),
+                        "event_id": event_id,
                         "market_name": outcome.get("description"),
                         "marketType": outcome.get("description"),
                         "label": outcome.get("description"),
                         "odds_american": p.get("american"),
                         "odds_decimal": p.get("decimal"),
                         "spread_or_line": p.get("handicap"),
-                        "bet_type": outcome.get("description").lower(),
+                        "bet_type": market.get("description").lower(),
                         "participant": outcome.get("description"),
                         "match": "market_name",
                     }
@@ -338,8 +340,17 @@ class BovadaRunner(BaseRunner):
             ),
         }
 
-    async def run(self, event: Event, output_dir: Path, league: str) -> None:  # noqa: ARG002
+    async def run(self, event: Event, output_dir: Path, league: str) -> None:
         """Consume the Bovada websocket, subscribe to one event_id, and log plaintext frames."""
+
+        path = odds_filepath(output_dir, league, event.event_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.log.info(
+            "%s - logging odds data for %s to %s",
+            self.__class__.__name__,
+            event,
+            path,
+        )
 
         start = time.time()
         events = 0
@@ -393,83 +404,89 @@ class BovadaRunner(BaseRunner):
                         subscribe_payload,
                     )
 
-                    try:
-                        while True:
-                            if time.time() - last_event_time > BOVADA_MAX_TIME_SINCE_LAST_EVENT:
-                                self.log.info(
-                                    "%s - no updates for %d seconds; assuming %s has ended.",
-                                    self.__class__.__name__,
-                                    BOVADA_MAX_TIME_SINCE_LAST_EVENT,
-                                    event,
-                                )
-                                await ws.send(unsubscribe_payload)
-                                return
-
-                            task = asyncio.current_task()
-                            if task and task.cancelled():
-                                self.log.warning(
-                                    "%s - websocket runner for %s cancelled mid-loop.",
-                                    self.__class__.__name__,
-                                    event,
-                                )
-                                await ws.send(unsubscribe_payload)
-                                return
-
-                            try:
-                                msg = await asyncio.wait_for(ws.recv(), timeout=10)
-                            except asyncio.TimeoutError:
-                                self.maybe_emit_heartbeat(event, stats=current_stats())
-                                continue
-
-                            if isinstance(msg, bytes):
-                                payload_bytes = msg
-                                payload_text = payload_bytes.decode("utf-8", errors="replace")
-                            else:
-                                payload_text = msg
-                                payload_bytes = payload_text.encode("utf-8")
-
-                            if "|" not in payload_text:
-                                preview = payload_text.strip()
-                                if len(preview) > 200:
-                                    preview = f"{preview[:200]}..."
-                                self.log.warning(
-                                    "%s - no header in payload: %s",
-                                    self.__class__.__name__,
-                                    preview or "<empty>",
-                                )
-                                continue
-
-                            _header, body = payload_text.split("|", 1)
-                            msg_data = json.loads(body)
-
-                            hits = extract_bovada_odds(msg_data, league)
-                            if hits:
-                                odds_hits += len(hits)
-                                last_event_time = time.time()
-
-                            total_bytes += len(payload_bytes)
-                            events += 1
-                            stats = current_stats()
-                            if events % BOVADA_EVENT_LOG_INTERVAL == 0 and events > 0:
-                                self.maybe_emit_heartbeat(event, force=True, stats=stats)
-
-                            self.maybe_emit_heartbeat(event, stats=stats)
-
-                    finally:
+                    label = event.game_label()
+                    with open(path, "a", encoding="utf-8") as writer:
                         try:
-                            await ws.send(unsubscribe_payload)
-                            self.log.info(
-                                "%s - sent unsubscribe payload: %s",
-                                self.__class__.__name__,
-                                unsubscribe_payload,
-                            )
-                        except Exception as exc:
-                            self.log.warning(
-                                "%s - failed to send unsubscribe for %s: %s",
-                                self.__class__.__name__,
-                                event,
-                                exc,
-                            )
+                            while True:
+                                if time.time() - last_event_time > BOVADA_MAX_TIME_SINCE_LAST_EVENT:
+                                    self.log.info(
+                                        "%s - no updates for %d seconds; assuming %s has ended.",
+                                        self.__class__.__name__,
+                                        BOVADA_MAX_TIME_SINCE_LAST_EVENT,
+                                        event,
+                                    )
+                                    await ws.send(unsubscribe_payload)
+                                    return
+
+                                task = asyncio.current_task()
+                                if task and task.cancelled():
+                                    self.log.warning(
+                                        "%s - websocket runner for %s cancelled mid-loop.",
+                                        self.__class__.__name__,
+                                        event,
+                                    )
+                                    await ws.send(unsubscribe_payload)
+                                    return
+
+                                try:
+                                    msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                                except asyncio.TimeoutError:
+                                    self.maybe_emit_heartbeat(event, stats=current_stats())
+                                    continue
+
+                                if isinstance(msg, bytes):
+                                    payload_bytes = msg
+                                    payload_text = payload_bytes.decode("utf-8", errors="replace")
+                                else:
+                                    payload_text = msg
+                                    payload_bytes = payload_text.encode("utf-8")
+
+                                if "|" not in payload_text:
+                                    preview = payload_text.strip()
+                                    if len(preview) > 200:
+                                        preview = f"{preview[:200]}..."
+                                    self.log.warning(
+                                        "%s - no header in payload: %s",
+                                        self.__class__.__name__,
+                                        preview or "<empty>",
+                                    )
+                                    continue
+
+                                _header, body = payload_text.split("|", 1)
+                                msg_data = json.loads(body)
+
+                                hits = extract_bovada_odds(event.event_id, msg_data, league)
+                                if hits:
+                                    odds_hits += len(hits)
+                                    last_event_time = time.time()
+                                    for hit in hits:
+                                        selection = Selection(event.event_id, hit)
+                                        change = SelectionChange(label, selection)
+                                        writer.write(change.to_json() + "\n")
+                                    writer.flush()
+
+                                total_bytes += len(payload_bytes)
+                                events += 1
+                                stats = current_stats()
+                                if events % BOVADA_EVENT_LOG_INTERVAL == 0 and events > 0:
+                                    self.maybe_emit_heartbeat(event, force=True, stats=stats)
+
+                                self.maybe_emit_heartbeat(event, stats=stats)
+                        finally:
+                            try:
+                                await ws.send(unsubscribe_payload)
+                                self.log.info(
+                                    "%s - sent unsubscribe payload: %s",
+                                    self.__class__.__name__,
+                                    unsubscribe_payload,
+                                )
+                            except Exception as exc:
+                                self.log.warning(
+                                    "%s - failed to send unsubscribe for %s: %s",
+                                    self.__class__.__name__,
+                                    event,
+                                    exc,
+                                )
 
             except (
                 websockets.exceptions.ConnectionClosedError,
