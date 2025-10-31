@@ -99,11 +99,14 @@ def is_league_matchup(path: str, league: str) -> bool:
     league = league.lower().strip()
     path = path.lower().strip()
 
+    def extract_mascots(items: set) -> list[str]:
+        return [item.split("-")[-1] for item in items]
+
     # Map league identifiers to team sets
     league_teams = {
-        "mlb": MGM_MLB_TEAMS,
-        "nfl": MGM_NFL_TEAMS,
-        "nba": MGM_NBA_TEAMS,
+        "mlb": extract_mascots(MGM_MLB_TEAMS),
+        "nfl": extract_mascots(MGM_NFL_TEAMS),
+        "nba": extract_mascots(MGM_NBA_TEAMS),
     }.get(league)
 
     if not league_teams:
@@ -275,7 +278,6 @@ class BovadaEventScraper(BaseEventScraper):
 
                     if not selections:
                         self.log.warning("%s - no selections found", self.__class__.__name__)
-                        return selections
 
                     # Build event URL
                     event_link = ev.get("link", "")
