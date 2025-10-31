@@ -1,84 +1,193 @@
 # event_monitor
 
-Asynchronous tooling for collecting sportsbook events, persisting snapshots, and
-streaming live odds updates. Each processor contributes a `scrape` command that
-captures the day’s schedule and a `monitor` command that streams odds into
-timestamped JSONL logs.
+<img src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" />
+<img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+
+- [Overview](#overview)
+- [Usage](#usage)
+- [Workflows](#workflows)
+  - [Scrape](#scrape)
+  - [Monitor](#monitor)
+- [Provider Coverage](#provider-coverage)
+- [Providers](#providers)
+- [Output and Storage](#output-and-storage)
+- [Glossary](#glossary)
+- [Development Notes](#development-notes)
+
+Asynchronous tooling for collecting sportsbook events, persisting immutable
+snapshots, and streaming live odds updates.
+
+## Overview
+
+- Asynchronous CLI for gathering sportsbook events and live odds updates.
+- Integrates DraftKings, BetMGM, Bovada, and FanDuel (monitoring in progress).
+- Targets NBA, NFL, and MLB leagues with an extensible storage interface.
 
 ## Usage
 
 ```text
-usage: main.py [-h] [-p {betmgm,draftkings,fanduel}] -t {scrape,monitor}
-               [-o OUTPUT_DIR] [-i INTERVAL]
+usage: main.py [-h] [-p PROVIDERS] -t {scrape,monitor} [-l LEAGUES] \
+               -o OUTPUT_DIR [-i INTERVAL] [--overwrite]
 
 Unified Event Monitor CLI
 
 options:
   -h, --help            show this help message and exit
-  -p {betmgm,draftkings,fanduel}, --provider {betmgm,draftkings,fanduel}
-                        Target sportsbook provider (omit to run all)
+  -p PROVIDERS, --provider PROVIDERS
+                        Comma-separated sportsbook providers (omit to run all)
   -t {scrape,monitor}, -task {scrape,monitor}, --task {scrape,monitor}
                         Operation to perform
+  -l LEAGUES, --league LEAGUES
+                        Comma-separated leagues to limit (nba,nfl,mlb)
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Base directory where provider artifacts are written
   -i INTERVAL, --interval INTERVAL
                         Refresh interval in seconds (DraftKings monitor only)
+  --overwrite           Replace existing snapshots instead of skipping
 ```
 
-Skip `--provider` to execute every processor in sequence. The CLI accepts both
-short aliases (`dk`, `fd`) and full names (`draftkings`, `betmgm`, `fanduel`).
+- Providers must be supplied using their full names (e.g., `draftkings`,
+  `betmgm`, `bovada`, `fanduel`). Omit `--provider` to run every available
+  scraper or monitor.
+- `--output-dir` is required for all tasks; the path is resolved relative to the
+  current working directory.
+- Restrict execution with `--league nba,mlb` for targeted runs.
+- Use `--overwrite` to replace existing daily snapshots during a rescrape.
+- DraftKings monitors honor `--interval`; other providers pace themselves.
 
-## DraftKings Processor (Websocket)
+Examples:
 
-- `python main.py --provider draftkings --task scrape --output-dir data`
-  — launches Playwright, enumerates event URLs, normalises spread markets, and
-  persists `nba-YYYYMMDD.json` snapshots.
-- `python main.py --provider draftkings --task monitor --output-dir data --interval 30`
-  — consumes the websocket feed using the selections saved in the snapshot.
-  Heartbeats are emitted even when a game is idle so every in-flight event logs
-  progress (no more silent NBA sessions).
-- Snapshots live under `data/draftkings/events/`, odds streams land in
-`data/draftkings/events/odds/`. Each reconnect reuses the subscription
-  payload and the base runner ensures only one websocket is opened per game.
+```sh
+$ poetry run python main.py --task scrape --output-dir data
+```
+- Run every supported scraper for all providers and leagues, writing fresh daily snapshots.
 
-## MGM Processor (Playwright Polling)
+```sh
+$ poetry run python main.py -p draftkings,betmgm --task monitor --output-dir data
+```
+- Start DraftKings and BetMGM monitors using their latest snapshots and default pacing.
 
-- `python main.py --provider betmgm --task scrape --output-dir data`
-  — navigates the BetMGM league pages, filters to today’s games, and stores
-  their metadata.
-- `python main.py --provider betmgm --task monitor --output-dir data`
-  — reloads each event page on a short cadence and flattens
-  spread/total/moneyline rows into JSONL records.
-  The shared runner logic emits a heartbeat once per minute so you can see NBA
-  and NFL games even when the DOM hasn’t changed.
-- Odds logs are appended beneath the same directory structure as DraftKings to
-  keep comparisons simple.
+```sh
+$ poetry run python main.py \
+  --task monitor \
+  --provider draftkings \
+  --interval 45 \
+  --output-dir data
+```
+- Monitor DraftKings only, overriding the websocket refresh cadence to 45 seconds.
 
-## FanDuel Processor (WIP)
+## Provider Coverage
 
-- `python main.py --provider fanduel --task scrape --output-dir data`
-  — mirrors the scraper API but market normalisation and live polling are still
-  stubbed out.
-- `python main.py --provider fanduel --task monitor --output-dir data`
-  — currently raises `NotImplementedError` until live polling is implemented. Once
-  market responses are recorded, it can be wired into the shared runner without
-  impacting downstream consumers.
+| League | DraftKings | BetMGM | Bovada | FanDuel   |
+| --- | --- | --- | --- |-----------|
+| NBA | ✅ | ✅ | ✅ | ❌         |
+| NFL | ✅ | ✅ | ✅ | ❌ |
+| MLB | ✅ | ✅ | ✅ | ❌ |
 
-## Shared Architecture
+## Workflows
 
-- `event_monitor/scraper.py` houses the `BaseEventScraper` with consistent
-  persistence helpers (`event_filepath`, `odds_filepath`).
-- `event_monitor/runner.py` contains `BaseRunner` (including heartbeat support)
-  and `BaseMonitor` which ensures only one runner is started per live event.
-- Constants such as ANSI colours, heartbeat intervals, and league URLs live in
-  `event_monitor/constants.py` so processors share the same tuning knobs.
+### `scrape`
 
-## Development Notes
+The `scrape` workflow launches provider-specific collectors that enumerate the
+day’s playable events, normalize metadata (teams, start times, selections), and
+write snapshots to `output_dir/<provider>/events/<league>/<league>-YYYYMMDD.json`.
+Snapshots are timestamped and never overwritten; reruns append a new file for
+comparison.
 
-- Run `poetry install` followed by `poetry run playwright install chromium`
-  before scraping.
-- Snapshot JSON files are immutable—new runs create new timestamped artefacts
-  rather than overwriting existing data.
-- Heartbeat logs are now produced for every service via the shared base runner,
-  so missing output usually means the event hasn’t started rather than a stalled
-  connection.
+### `monitor`
+
+The `monitor` workflows read the latest `scrape` snapshot for each provider and league, reuse
+the stored selection IDs, and stream live odds into JSONL files under
+`output_dir/<provider>/events/odds/`. Runners emit heartbeat entries when the
+feed is idle so that quiet games remain traceable.
+
+> Note that the usage of JSON files on disk is a local development feature.
+
+## Providers
+
+- **DraftKings** 
+  - Uses Playwright to enumerate event URLs, persists the spread
+    selections, and connects to a MsgPack websocket stream. The optional
+    `--interval` flag controls how often the monitor refreshes connection state.
+- **BetMGM**
+  - Scrapes its league pages with Playwright, derives team metadata
+    from URLs, and polls the public CDS API on a tight cadence. Odds updates are
+    emitted via DOM snapshots that BaseRunner throttles with heartbeat intervals.
+- **Bovada**
+  - Currently fetches events through HTTP coupon endpoints and ingests
+    live odds via the Bovada websocket. Team filters reuse BetMGM slug helpers to
+    keep league detection consistent.
+- **FanDuel**
+  - Scraping is scaffolded with Playwright discovery, but selection
+    flattening and monitoring are not yet implemented. Scrape runs succeed with
+    placeholder selections; monitor runs log an informational skip.
+
+## Output
+
+- `scrape` snapshots are immutable JSON files that record the state of each event at
+  scrape time.
+- `monitor` snapshot streams are newline-delimited JSON (JSONL) files keyed by the associated
+  snapshot timestamp and event identifier.
+- The current sink is the local filesystem beneath `data/`. Future work will
+  route artifacts to other sinks such as PostgreSQL, Redis, or cloud object
+  storage without changing the CLI contract.
+
+## Glossary
+
+- **Task** – One of `scrape` or `monitor`. Tasks define whether the CLI is
+  collecting schedules or streaming odds.
+- **Scrape** – A task that navigates provider frontends or APIs to discover the
+  upcoming schedule, captures team metadata, and stores selections for later
+  monitoring.
+- **Monitor** – A task that reuses stored selections to ingest live odds via
+  websockets or polling loops, emitting JSONL records with heartbeats for idle
+  games.
+- **Provider** – A sportsbook integration (`draftkings`, `betmgm`, `bovada`,
+  `fanduel`). Providers expose both scrape and monitor entry points when
+  implemented.
+- **Output Directory (`output_dir`)** – The root sink supplied via `--output-dir`.
+  All snapshots and odds logs are written under this path. Designed to be
+  swapped for other sink types in future work.
+- **Interval** – Optional CLI pacing for DraftKings monitoring; other providers
+  manage loop timing internally (e.g., BetMGM reloads every second).
+- **Selection** – A single wager option returned by a provider (for example, a
+  team’s spread or moneyline). Snapshots record selections so monitors can
+  resubscribe accurately.
+- **Odds** – Price information attached to each selection. Providers return
+  American odds (e.g., +150 / -110) and often include decimal odds for
+  comparison.
+- **Snapshot** – A timestamped JSON document containing all events for a league
+  as of the scrape run. Stored under the provider’s `events` directory and never
+  overwritten.
+- **Heartbeat** – A periodic log entry emitted by monitors to confirm that the
+  connection remains active even when no odds change is detected.
+
+## Development
+
+```sh
+$ git clone https://github.com/stonehedgelabs/event_monitor.git
+$ cd event_monitor
+```
+- Clone the repository and enter the project directory.
+
+```sh
+$ python3 -m venv .venv
+$ source .venv/bin/activate
+```
+- Create and activate a Python 3.12 virtual environment.
+
+```sh
+$ pip install poetry
+```
+- Install Poetry inside the virtual environment.
+
+```sh
+$ poetry install
+$ poetry run playwright install chromium
+```
+- Install project dependencies and fetch the Chromium binary for Playwright.
+
+```sh
+$ poetry run pytest
+```
+- Execute the test suite before shipping changes.
