@@ -1,21 +1,22 @@
 from __future__ import annotations
+
 import asyncio
 import datetime as dt
 import json
 import logging
-import zoneinfo
+import pathlib
 import re
 import time
-import pathlib
-from typing import Any, Sequence
+import zoneinfo
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from tzlocal import get_localzone
 
-from event_monitor.constants import (
+from snuper.constants import (
     YELLOW,
     MGM_DEFAULT_MONITOR_INTERVAL,
     MGM_MONITOR_SWEEP_INTERVAL,
@@ -30,10 +31,10 @@ from event_monitor.constants import (
     MAX_RUNNER_ERRORS,
     League,
 )
-from event_monitor.runner import BaseMonitor, BaseRunner
-from event_monitor.scraper import BaseEventScraper, ScrapeContext
-from event_monitor.t import Event, Selection, SelectionChange
-from event_monitor.utils import (
+from snuper.runner import BaseMonitor, BaseRunner
+from snuper.scraper import BaseEventScraper, ScrapeContext
+from snuper.t import Event, Selection, SelectionChange
+from snuper.utils import (
     configure_colored_logger,
     decimal_to_american,
     format_bytes,
@@ -243,16 +244,28 @@ class BetMGMEventScraper(BaseEventScraper):
                 event_id = event_url.split("-")[-1]
                 fixture_data = {}
 
-                async def capture_fixture_response(response):
+                async def capture_fixture_response(
+                    response,
+                    *,
+                    expected_event_id: str = event_id,
+                    target_fixture: dict[str, Any] = None,
+                ) -> None:
                     url = response.url
-                    if "fixture-view" in url and f"fixtureIds={event_id}" in url:
+                    if "fixture-view" in url and f"fixtureIds={expected_event_id}" in url:
                         try:
                             data = await response.json()
-                            fixture_data.update(data)
-                            self.log.info("%s - captured fixture JSON for %s", self.__class__.__name__, event_id)
+                            target_fixture.update(data)
+                            self.log.info(
+                                "%s - captured fixture JSON for %s",
+                                self.__class__.__name__,
+                                expected_event_id,
+                            )
                         except Exception as e:
                             self.log.warning(
-                                "%s - failed to decode fixture %s: %s", self.__class__.__name__, event_id, e
+                                "%s - failed to decode fixture %s: %s",
+                                self.__class__.__name__,
+                                expected_event_id,
+                                e,
                             )
 
                 page.on("response", capture_fixture_response)
@@ -280,7 +293,7 @@ class BetMGMEventScraper(BaseEventScraper):
 
                     start_time = dt.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
                     start_local = start_time.astimezone(self.local_tz)
-                    if not (today_start <= start_local < today_end):
+                    if not today_start <= start_local < today_end:
                         self.log.info("%s - skipping %s (starts %s)", self.__class__.__name__, event_id, start_local)
                         continue
 
@@ -498,7 +511,7 @@ class BetMGMRunner(BaseRunner):
 
             self.log.info("%s - monitoring loop started for %s...", self.__class__.__name__, event)
 
-            with open(output_file, "a") as f:
+            with open(output_file, "a", encoding="utf-8") as f:
                 error_count = 0
                 while True:
                     try:

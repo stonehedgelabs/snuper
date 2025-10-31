@@ -1,11 +1,11 @@
 import datetime as dt
 import json
 import logging
+import re
 from pathlib import Path
-from typing import Optional
 
-from event_monitor.constants import RESET, DATE_STAMP_FORMAT
-from event_monitor.t import Event, Team
+from snuper.constants import RESET, DATE_STAMP_FORMAT
+from snuper.t import Event, Team
 
 
 def current_stamp(now: dt.datetime | None = None) -> str:
@@ -35,16 +35,21 @@ def odds_filepath(
     return Path(output_dir) / "odds" / f"{ts}-{league}-{event_id}.json"
 
 
-def decimal_to_american(decimal_odds: str) -> str:
+def decimal_to_american(decimal_odds: str) -> str | None:
     """Convert decimal odds (e.g. '1.80') to American format ('-125')."""
+
     try:
-        d = float(decimal_odds)
-        if d >= 2.0:
-            return f"+{int((d - 1) * 100):d}"
-        else:
-            return f"-{int(100 / (d - 1)):d}"
-    except Exception:
+        value = float(decimal_odds)
+    except (TypeError, ValueError):
         return None
+
+    if value >= 2.0:
+        return f"+{int((value - 1) * 100):d}"
+
+    if value <= 1:
+        return None
+
+    return f"-{int(100 / (value - 1)):d}"
 
 
 def load_events(file_path: Path) -> tuple[str, list[Event]]:
@@ -91,11 +96,11 @@ def configure_colored_logger(name: str, color: str) -> logging.Logger:
     """Return logger ``name`` that prefixes messages with ``color`` codes."""
 
     logger = logging.getLogger(name)
-    existing: Optional[str] = getattr(logger, "_color_prefix", None)
+    existing: str | None = getattr(logger, "_color_prefix", None)
     if existing == color:
         return logger
 
-    filt: Optional[_ColorPrefixFilter] = getattr(logger, "_color_filter", None)
+    filt: _ColorPrefixFilter | None = getattr(logger, "_color_filter", None)
     if filt is None:
         filt = _ColorPrefixFilter(color)
         logger.addFilter(filt)
@@ -130,12 +135,13 @@ def format_duration(seconds: float) -> str:
         parts.append(f"{mins}{suffix}")
 
     if not parts:
-        return f"{secs}s"
+        result = f"{secs}s"
+    else:
+        if len(parts) < 2 and secs and not days:
+            parts.append(f"{secs}s")
+        result = " ".join(parts[:2])
 
-    if len(parts) < 2 and secs and not days:
-        parts.append(f"{secs}s")
-
-    return " ".join(parts[:2])
+    return result
 
 
 def format_bytes(num_bytes: int) -> str:
@@ -156,6 +162,8 @@ def format_bytes(num_bytes: int) -> str:
             return f"{value:.0f}{unit}"
         value /= 1024
 
+    return ""
+
 
 def format_rate_per_sec(count: int, elapsed_seconds: float) -> str:
     """Format ``count`` occurrences across ``elapsed_seconds`` as ``'1.2/s'``."""
@@ -169,7 +177,7 @@ def format_rate_per_sec(count: int, elapsed_seconds: float) -> str:
     return f"{rate:,.1f}/s"
 
 
-def mgm_constant_to_team(constant_name: str, teams: list[Team]) -> Optional[Team]:
+def mgm_constant_to_team(constant_name: str, teams: list[Team]) -> Team | None:
     """
     Given an MGM_* constant (e.g. 'MGM_MLB_LOS_ANGELES_DODGERS'),
     return the matching Team object from the provided teams list.
@@ -191,7 +199,7 @@ def mgm_constant_to_team(constant_name: str, teams: list[Team]) -> Optional[Team
     return None
 
 
-def team_to_mgm_constant(team: Team) -> Optional[str]:
+def team_to_mgm_constant(team: Team) -> str | None:
     """
     Given a Team, return its MGM_* constant name (e.g. 'MGM_MLB_LOS_ANGELES_DODGERS').
     """

@@ -29,6 +29,7 @@ disable=
     R0913,  # too-many-arguments (fine for structured tasks)
     R0914,  # too-many-locals
     R0915,  # too-many-statements
+    R0917,  # too-many-positional-arguments (common in data containers)
     W0511,  # FIXME/TODO comments
     W0703,  # broad-except (okay for top-level asyncio)
     C0103,  # invalid-name (snake_case already enforced by formatter)
@@ -73,7 +74,6 @@ logging-modules=logging
 [IMPORTS]
 known-standard-library=dataclasses,asyncio,typing
 known-third-party=httpx,playwright,tzlocal
-known-local-folder=event_monitor
 
 [SIMILARITIES]
 min-similarity-lines=8
@@ -83,7 +83,7 @@ min-similarity-lines=8
 dummy-variables-rgx=^(_|unused_|ignored_).*
 
 [EXCEPTIONS]
-overgeneral-exceptions=Exception
+overgeneral-exceptions=builtins.Exception
 
 [SPELLING]
 spelling-ignore-words=asyncio,Playwright,httpx,pytest

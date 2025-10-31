@@ -31,15 +31,7 @@ GAME_RUNTIME_SECONDS = 14400
 DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
 """Primary DraftKings websocket endpoint for odds streaming."""
 
-# Bovada configuration
-BOVADA_WEBSOCKET_URL = (
-    "wss://services.bovada.lv/services/sports/subscription/71908712-7357-0123-5739-564427734220"
-    "?X-Atmosphere-tracking-id=0&X-Atmosphere-Framework=3.1.0-javascript"
-    "&X-Atmosphere-Transport=websocket"
-)
-"""Primary Bovada websocket endpoint for odds streaming."""
-
-BOVADA_EVENT_LOG_INTERVAL = 500
+BOVADA_EVENT_LOG_INTERVAL = 10
 """Frequency for heartbeat logging of Bovada websocket events."""
 
 BOVADA_HEARTBEAT_SECONDS = 60
@@ -130,7 +122,7 @@ MGM_NBA_TEAMS = {
     "utah-jazz",
     "washington-wizards",
 }
-"""Lowercase MGM team slugs that flag NBA events during filtering."""
+# Lowercase MGM team slugs that flag NBA events during filtering.
 
 MGM_NFL_TEAMS = {
     "arizona-cardinals",
@@ -166,7 +158,7 @@ MGM_NFL_TEAMS = {
     "tennessee-titans",
     "washington-commanders",
 }
-"""Lowercase MGM team slugs that flag NFL events during filtering."""
+# Lowercase MGM team slugs that flag NFL events during filtering.
 
 MGM_MLB_TEAMS = {
     "arizona-diamondbacks",
@@ -200,26 +192,24 @@ MGM_MLB_TEAMS = {
     "toronto-blue-jays",
     "washington-nationals",
 }
-"""Lowercase MGM team slugs that flag MLB events during filtering."""
+# Lowercase MGM team slugs that flag MLB events during filtering.
 
 
 class League(enum.Enum):
+    """Sports leagues."""
+
     NBA = "nba"
     MLB = "mlb"
     NFL = "nfl"
 
 
-"""Sports leagues"""
-
-
 class Provider(enum.Enum):
+    """Sports data providers."""
+
     DraftKings = "draftkings"
     BetMGM = "betmgm"
     FanDuel = "fanduel"
     Bovada = "bovada"
-
-
-"""Sports data providers"""
 
 
 SPORTS = {
@@ -227,4 +217,4 @@ SPORTS = {
     "mlb": "baseball",
     "nfl": "football",
 }
-"""Sports"""
+# Mapping from league codes to their parent sports.

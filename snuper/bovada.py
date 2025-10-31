@@ -5,13 +5,14 @@ import datetime as dt
 import json
 import logging
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import httpx
 import websockets
 
-from event_monitor.constants import (
+from snuper.constants import (
     CYAN,
     SUPPORTED_LEAGUES,
     MGM_NBA_TEAMS,
@@ -21,13 +22,12 @@ from event_monitor.constants import (
     MAX_RUNNER_ERRORS,
     BOVADA_EVENT_LOG_INTERVAL,
     BOVADA_HEARTBEAT_SECONDS,
-    BOVADA_WEBSOCKET_URL,
     BOVADA_MAX_TIME_SINCE_LAST_EVENT,
 )
-from event_monitor.runner import BaseMonitor, BaseRunner
-from event_monitor.scraper import BaseEventScraper, ScrapeContext
-from event_monitor.t import Event
-from event_monitor.utils import (
+from snuper.runner import BaseMonitor, BaseRunner
+from snuper.scraper import BaseEventScraper, ScrapeContext
+from snuper.t import Event
+from snuper.utils import (
     configure_colored_logger,
     format_bytes,
     format_duration,
@@ -85,6 +85,10 @@ event_headers = {
 }
 
 
+def description_filter(league: str) -> str:
+    return "Live Game" if league == League.NBA.value else "Game"
+
+
 def derive_bovada_timestamp(ts: int) -> dt.datetime:
     dt_utc = dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc)
     # dt_est = dt_utc.astimezone(pytz.timezone("US/Eastern"))
@@ -122,14 +126,14 @@ def is_league_matchup(path: str, league: str) -> bool:
     return len(matched_teams) == 2
 
 
-def extract_bovada_odds(data: dict):
+def extract_bovada_odds(data: dict, league: str) -> dict:
     results = []
     for market in data.get("markets", []):
         print(market.get("period", {}).get("description"))
         print(market.get("period", {}).get("abbreviation"))
         print(market.get("description"))
         if (
-            market.get("period", {}).get("description") == "Live Game"
+            market.get("period", {}).get("description") == description_filter(league)
             and market.get("period", {}).get("abbreviation") == "G"
             and market.get("description") in {"Spread", "Moneyline"}
         ):
@@ -176,6 +180,7 @@ class BovadaEventScraper(BaseEventScraper):
         source_events: Sequence[Event] | None = None,
     ) -> list[Event]:
         """Fetch today's Bovada full-game events for ``league``."""
+        # pylint: disable=too-many-nested-blocks
 
         url = f"https://www.bovada.lv/services/sports/event/coupon/events/A/description/{context.sport}?marketFilterId=def&preMatchOnly=true&eventsLimit=50&lang=en"
         try:
@@ -208,7 +213,7 @@ class BovadaEventScraper(BaseEventScraper):
                     start_time = derive_bovada_timestamp(ev["startTime"])
 
                     # Skip events not starting today
-                    if not (start_of_day <= start_time.astimezone(self.local_tz) < end_of_day):
+                    if not start_of_day <= start_time.astimezone(self.local_tz) < end_of_day:
                         self.log.warning(
                             "%s - date condition *NOT* met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
                             self.__class__.__name__,
@@ -236,8 +241,6 @@ class BovadaEventScraper(BaseEventScraper):
                     home_tokens = tuple(home_team.get("name", "").lower().split())
                     away_tokens = tuple(away_team.get("name", "").lower().split())
 
-                    description_filter = "Live Game" if context.league == League.NBA else "Game"
-
                     selections = []
                     for dg in ev.get("displayGroups", []):
                         if dg.get("alternateType"):
@@ -246,7 +249,7 @@ class BovadaEventScraper(BaseEventScraper):
                         for market in dg.get("markets", []):
                             period = market.get("period", {})
                             if (
-                                period.get("description") == description_filter
+                                period.get("description") == description_filter(context.league)
                                 and period.get("abbreviation") == "G"
                                 and period.get("main", False)
                             ):
@@ -314,7 +317,7 @@ class BovadaRunner(BaseRunner):
 
     def __init__(self) -> None:
         super().__init__(heartbeat_interval=BOVADA_HEARTBEAT_SECONDS, log_color=CYAN)
-        self.url = BOVADA_WEBSOCKET_URL
+        self.url = "wss://services.bovada.lv/services/sports/subscription/57858489-9422-6222-5982-488405165904?X-Atmosphere-tracking-id=0&X-Atmosphere-Framework=3.1.0-javascript&X-Atmosphere-Transport=websocket"
         self.headers = {
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "en-US,en;q=0.9",
@@ -344,8 +347,7 @@ class BovadaRunner(BaseRunner):
         error_count = 0
         self.reset_heartbeat()
 
-        # subscribe_payload = f"SUBSCRIBE|A|/events/18621073.1761785145345?delta=true"
-        subscribe_payload = f"SUBSCRIBE|A|/events/18621073.1?delta=true"
+        subscribe_payload = f"SUBSCRIBE|A|/events/{event.event_id}.1?delta=true"
         unsubscribe_payload = f"UNSUBSCRIBE|{event.event_id}"
 
         def current_stats() -> dict[str, Any]:
@@ -435,10 +437,10 @@ class BovadaRunner(BaseRunner):
                                 )
                                 continue
 
-                            header, body = payload_text.split("|", 1)
+                            _header, body = payload_text.split("|", 1)
                             msg_data = json.loads(body)
 
-                            hits = extract_bovada_odds(msg_data)
+                            hits = extract_bovada_odds(msg_data, league)
                             if hits:
                                 odds_hits += len(hits)
                                 last_event_time = time.time()

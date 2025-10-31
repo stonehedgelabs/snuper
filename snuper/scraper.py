@@ -4,14 +4,16 @@ import abc
 import datetime as dt
 import json
 import logging
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from tzlocal import get_localzone
-from typing import Any, Iterable, Sequence
+from typing import Any
 
-from event_monitor.constants import SPORTS
-from event_monitor.utils import current_stamp, event_filepath
-from event_monitor.t import Event
+from tzlocal import get_localzone
+
+from snuper.constants import SPORTS
+from snuper.utils import current_stamp, event_filepath
+from snuper.t import Event
 
 __all__ = ["BaseEventScraper", "ScrapeContext"]
 
@@ -61,6 +63,7 @@ class BaseEventScraper(abc.ABC):
     async def load_source_events(self, context: ScrapeContext) -> Sequence[Event] | None:
         """Return any prerequisite events required for ``context.league``."""
 
+        _ = context
         return None
 
     def save(

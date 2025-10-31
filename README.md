@@ -1,18 +1,20 @@
-# event_monitor
+# snuper
+![CI](https://github.com/stonehedgelabs/snuper/actions/workflows/ci.yaml/badge.svg)
 
-<img src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" />
-<img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+<div display="flex" align-items="center">
+  <img src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+</div>
 
 - [Overview](#overview)
 - [Usage](#usage)
+- [Coverage](#coverage)
 - [Workflows](#workflows)
   - [Scrape](#scrape)
   - [Monitor](#monitor)
-- [Provider Coverage](#provider-coverage)
-- [Providers](#providers)
-- [Output and Storage](#output-and-storage)
+- [Output](#output)
+- [Development](#development)
 - [Glossary](#glossary)
-- [Development Notes](#development-notes)
 
 Asynchronous tooling for collecting sportsbook events, persisting immutable
 snapshots, and streaming live odds updates.
@@ -76,7 +78,7 @@ $ poetry run python main.py \
 ```
 - Monitor DraftKings only, overriding the websocket refresh cadence to 45 seconds.
 
-## Provider Coverage
+## Coverage
 
 | League | DraftKings | BetMGM | Bovada | FanDuel   |
 | --- | --- | --- | --- |-----------|
@@ -132,6 +134,36 @@ feed is idle so that quiet games remain traceable.
   route artifacts to other sinks such as PostgreSQL, Redis, or cloud object
   storage without changing the CLI contract.
 
+## Development
+
+```sh
+$ git clone https://github.com/stonehedgelabs/snuper.git
+$ cd snuper
+```
+- Clone the repository and enter the project directory.
+
+```sh
+$ python3 -m venv .venv
+$ source .venv/bin/activate
+```
+- Create and activate a Python 3.12 virtual environment.
+
+```sh
+$ pip install poetry
+```
+- Install Poetry inside the virtual environment.
+
+```sh
+$ poetry install
+$ poetry run playwright install chromium
+```
+- Install project dependencies and fetch the Chromium binary for Playwright.
+
+```sh
+$ poetry run pytest
+```
+- Execute the test suite before shipping changes.
+
 ## Glossary
 
 - **Task** – One of `scrape` or `monitor`. Tasks define whether the CLI is
@@ -161,33 +193,3 @@ feed is idle so that quiet games remain traceable.
   overwritten.
 - **Heartbeat** – A periodic log entry emitted by monitors to confirm that the
   connection remains active even when no odds change is detected.
-
-## Development
-
-```sh
-$ git clone https://github.com/stonehedgelabs/event_monitor.git
-$ cd event_monitor
-```
-- Clone the repository and enter the project directory.
-
-```sh
-$ python3 -m venv .venv
-$ source .venv/bin/activate
-```
-- Create and activate a Python 3.12 virtual environment.
-
-```sh
-$ pip install poetry
-```
-- Install Poetry inside the virtual environment.
-
-```sh
-$ poetry install
-$ poetry run playwright install chromium
-```
-- Install project dependencies and fetch the Chromium binary for Playwright.
-
-```sh
-$ poetry run pytest
-```
-- Execute the test suite before shipping changes.

@@ -1,16 +1,19 @@
 from __future__ import annotations
+
 import datetime as dt
 import logging
-import re
 import pathlib
-from typing import Any, Sequence
+import re
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import urlparse
+
 from playwright.async_api import async_playwright
 from tzlocal import get_localzone
 
-from event_monitor.runner import BaseMonitor
-from event_monitor.scraper import BaseEventScraper, ScrapeContext
-from event_monitor.t import Event
+from snuper.runner import BaseMonitor
+from snuper.scraper import BaseEventScraper, ScrapeContext
+from snuper.t import Event
 
 CYAN = "\033[96m"
 """ANSI escape code for cyan logs."""
@@ -103,9 +106,8 @@ class EventScraper(BaseEventScraper):
             raise ValueError(f"Unsupported league: {league}")
 
         self.log.info("%s - detected local timezone: %s", self.__class__.__name__, self.local_tz)
-        now = dt.datetime.now(self.local_tz)
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + dt.timedelta(days=1)
+        # now = dt.datetime.now(self.local_tz)
+        # start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         events: list[Event] = []
         headers = {
             # ":authority": "sportsbook.fanduel.com",
@@ -207,6 +209,7 @@ class FanDuelMonitor(BaseMonitor):
     ) -> None:
         """Initialise paths and bookkeeping for future polling tasks."""
         # FanDuel monitor is not yet implemented
+        # pylint: disable=super-init-not-called
         raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
 
     async def run_once(self) -> None:
@@ -233,5 +236,6 @@ async def run_monitor(
 ) -> None:
     """Execute the placeholder FanDuel monitor."""
 
+    _ = leagues
     monitor = FanDuelMonitor(input_dir)
     await monitor.run_once()

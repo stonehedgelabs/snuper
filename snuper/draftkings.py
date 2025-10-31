@@ -5,11 +5,12 @@ import datetime as dt
 import json
 import logging
 import os
+import pathlib
 import re
 import time
 import types
-import pathlib
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from urllib.parse import urlparse, unquote
 
 import httpx
@@ -18,9 +19,8 @@ import websockets
 from playwright.async_api import async_playwright
 
 
-from event_monitor.constants import (
+from snuper.constants import (
     CYAN,
-    RED,
     MAX_IDLE_SECONDS,
     MAX_RUNNER_ERRORS,
     DRAFTKINGS_DEFAULT_MONITOR_INTERVAL,
@@ -32,10 +32,10 @@ from event_monitor.constants import (
     DRAFTKINGS_WEBSOCKET_URL,
     SUPPORTED_LEAGUES,
 )
-from event_monitor.runner import BaseMonitor, BaseRunner
-from event_monitor.scraper import BaseEventScraper, ScrapeContext
-from event_monitor.t import Event, Selection, SelectionChange
-from event_monitor.utils import (
+from snuper.runner import BaseMonitor, BaseRunner
+from snuper.scraper import BaseEventScraper, ScrapeContext
+from snuper.t import Event, Selection, SelectionChange
+from snuper.utils import (
     configure_colored_logger,
     format_bytes,
     format_duration,
@@ -480,21 +480,26 @@ class DraftKingsRunner(BaseRunner):
         self.jwt = os.environ["DRAFTKINGS_WS_JWT"]
         self.url = DRAFTKINGS_WEBSOCKET_URL
 
-    async def run(self, game: Event, output_dir: pathlib.Path, league: str) -> None:
-        """Consume the websocket for ``game`` and append JSONL odds updates."""
+    async def run(self, event: Event, output_dir: pathlib.Path, league: str) -> None:
+        """Consume the websocket for ``event`` and append JSONL odds updates."""
 
         state = types.SimpleNamespace()
-        self.log.info("%s - using selections %s for %s", self.__class__.__name__, game.selections, game)
-        selection_ids = [x["selection_id"] for x in game.selections]
-        market_ids = [x["market_id"] for x in game.selections]
+        self.log.info("%s - using selections %s for %s", self.__class__.__name__, event.selections, event)
+        selection_ids = [x["selection_id"] for x in event.selections]
+        market_ids = [x["market_id"] for x in event.selections]
 
-        self.log.info("%s - starting websocket runner for game %s in league %s", self.__class__.__name__, game, league)
+        self.log.info(
+            "%s - starting websocket runner for game %s in league %s",
+            self.__class__.__name__,
+            event,
+            league,
+        )
         subscribe_payload = {
             "jsonrpc": "2.0",
             "params": {
                 "entity": "events",
                 "queryParams": {
-                    "query": f"$filter=id eq '{game.event_id}'",
+                    "query": f"$filter=id eq '{event.event_id}'",
                     "initialData": False,
                     "includeMarkets": "$filter=tags/all(t: t ne 'SportcastBetBuilder')",
                     "projection": "sportsbook",
@@ -512,9 +517,9 @@ class DraftKingsRunner(BaseRunner):
             "method": "subscribe",
             "id": "dk-ws-client",
         }
-        path = odds_filepath(output_dir, league, game.event_id)
+        path = odds_filepath(output_dir, league, event.event_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.log.info("%s - logging odds data for %s to %s", self.__class__.__name__, game, path)
+        self.log.info("%s - logging odds data for %s to %s", self.__class__.__name__, event, path)
         start = time.time()
         events = 0
         nhits = 0
@@ -527,22 +532,22 @@ class DraftKingsRunner(BaseRunner):
             return {
                 "start": start,
                 "events": events,
-                "event_start": game.start_time,
+                "event_start": event.start_time,
                 "hits": nhits,
                 "bytes_received": total_bytes,
             }
 
         while True:
             if asyncio.current_task() and asyncio.current_task().cancelled():
-                self.log.info("%s - websocket runner for %s cancelled, shutting down.", self.__class__.__name__, game)
+                self.log.info("%s - websocket runner for %s cancelled, shutting down.", self.__class__.__name__, event)
                 break
 
             try:
-                self.log.info("%s - connecting websocket for %s", self.__class__.__name__, game)
+                self.log.info("%s - connecting websocket for %s", self.__class__.__name__, event)
                 async with websockets.connect(self.url, max_size=None) as ws:
                     error_count = 0
                     await ws.send(msgpack.packb(subscribe_payload))
-                    self.log.info("%s - subscribed to %s", self.__class__.__name__, game)
+                    self.log.info("%s - subscribed to %s", self.__class__.__name__, event)
 
                     with open(path, "a", encoding="utf-8") as writer:
                         while True:
@@ -551,20 +556,20 @@ class DraftKingsRunner(BaseRunner):
                                     "%s - no updates for %d seconds; assuming %s has ended.",
                                     self.__class__.__name__,
                                     MAX_IDLE_SECONDS,
-                                    game,
+                                    event,
                                 )
                                 return
 
                             if asyncio.current_task() and asyncio.current_task().cancelled():
                                 self.log.warning(
-                                    "%s - websocket runner for %s cancelled mid-loop.", self.__class__.__name__, game
+                                    "%s - websocket runner for %s cancelled mid-loop.", self.__class__.__name__, event
                                 )
                                 return
 
                             try:
                                 msg = await asyncio.wait_for(ws.recv(), timeout=10)
                             except asyncio.TimeoutError:
-                                self.maybe_emit_heartbeat(game, stats=current_stats())
+                                self.maybe_emit_heartbeat(event, stats=current_stats())
                                 continue
 
                             try:
@@ -577,7 +582,7 @@ class DraftKingsRunner(BaseRunner):
 
                                 hits = process_dk_frame(
                                     msg_bytes,
-                                    game.event_id,
+                                    event.event_id,
                                     state,
                                     selection_ids,
                                     market_ids,
@@ -589,17 +594,17 @@ class DraftKingsRunner(BaseRunner):
                                 events += 1
                                 stats = current_stats()
                                 if events % DRAFTKINGS_EVENT_LOG_INTERVAL == 0 and events > 0:
-                                    self.maybe_emit_heartbeat(game, force=True, stats=stats)
+                                    self.maybe_emit_heartbeat(event, force=True, stats=stats)
 
                                 for hit in hits:
-                                    sel = Selection(game.event_id, hit)
-                                    change = SelectionChange(game.game_label(), sel)
+                                    sel = Selection(event.event_id, hit)
+                                    change = SelectionChange(event.game_label(), sel)
                                     writer.write(change.to_json() + "\n")
                                     writer.flush()
 
-                                self.maybe_emit_heartbeat(game, stats=stats)
+                                self.maybe_emit_heartbeat(event, stats=stats)
                             except Exception as e:
-                                self.log.warning("%s - decode error (%s): %s", self.__class__.__name__, game, e)
+                                self.log.warning("%s - decode error (%s): %s", self.__class__.__name__, event, e)
 
             except (
                 websockets.exceptions.ConnectionClosedError,
@@ -608,32 +613,32 @@ class DraftKingsRunner(BaseRunner):
             ) as e:
                 error_count += 1
                 self.log.warning(
-                    "%s - websocket disconnected (%s): %s. Reconnecting in 3s...", self.__class__.__name__, game, e
+                    "%s - websocket disconnected (%s): %s. Reconnecting in 3s...", self.__class__.__name__, event, e
                 )
                 if error_count > MAX_RUNNER_ERRORS:
                     stats = current_stats()
                     self.log.error(
                         "%s - assuming game ended for %s after %d consecutive websocket errors.",
                         self.__class__.__name__,
-                        game,
+                        event,
                         error_count,
                     )
-                    self.maybe_emit_heartbeat(game, force=True, stats=stats)
+                    self.maybe_emit_heartbeat(event, force=True, stats=stats)
                     break
                 await asyncio.sleep(3)
                 continue
             except Exception as e:
                 error_count += 1
-                self.log.error("%s - unexpected websocket error (%s): %s", self.__class__.__name__, game, e)
+                self.log.error("%s - unexpected websocket error (%s): %s", self.__class__.__name__, event, e)
                 if error_count > MAX_RUNNER_ERRORS:
                     stats = current_stats()
                     self.log.error(
                         "%s - assuming game ended for %s after %d consecutive runner errors.",
                         self.__class__.__name__,
-                        game,
+                        event,
                         error_count,
                     )
-                    self.maybe_emit_heartbeat(game, force=True, stats=stats)
+                    self.maybe_emit_heartbeat(event, force=True, stats=stats)
                     break
                 await asyncio.sleep(5)
 

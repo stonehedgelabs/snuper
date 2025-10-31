@@ -6,12 +6,14 @@ import contextlib
 import datetime as dt
 import logging
 import time
-from tzlocal import get_localzone
 from pathlib import Path
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
-from event_monitor.t import Event
-from event_monitor.utils import configure_colored_logger, load_events
+from tzlocal import get_localzone
+
+from snuper.t import Event
+from snuper.utils import configure_colored_logger, load_events
 
 __all__ = ["BaseRunner", "BaseMonitor"]
 
@@ -179,7 +181,7 @@ class BaseMonitor:
         """Inspect snapshot files, prune finished tasks, and start newcomers."""
 
         files = self._get_event_files()
-        self.log.info("%s - found %d files to potentially monitor", self.__class__.__name__, len(files))
+        self.log.info("%s - found %d files to potentially monitor today.", self.__class__.__name__, len(files))
         if not files:
             self.log.warning("%s - no event files found for today.", self.__class__.__name__)
             return

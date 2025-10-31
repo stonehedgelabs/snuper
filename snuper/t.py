@@ -1,18 +1,18 @@
 import datetime as dt
 import json
-import re
 import logging
-from typing import Any, Optional
+import re
+from typing import Any
 
 import rapidfuzz
 
-from event_monitor.constants import GAME_RUNTIME_SECONDS, MGM_NFL_TEAMS, MGM_MLB_TEAMS, MGM_NBA_TEAMS
+from snuper.constants import GAME_RUNTIME_SECONDS, MGM_NFL_TEAMS, MGM_MLB_TEAMS, MGM_NBA_TEAMS
 
 
 class Event:
     """In-memory representation of a scheduled or live sporting event."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         event_id: str,
         league: str,
@@ -20,7 +20,7 @@ class Event:
         start_time: dt.datetime,
         away: tuple[str, str],
         home: tuple[str, str],
-        selections: Optional[list],
+        selections: list[Any] | None,
     ) -> None:
         """Store identifying metadata and cached selections for an event."""
 
@@ -62,7 +62,7 @@ class Event:
             slug = "-".join(tokens).lower()
 
             # Find the best fuzzy match within this league’s team set
-            match, score, _ = rapidfuzz.process.extractOne(slug, teams, score_cutoff=70)
+            match, _score, _ = rapidfuzz.process.extractOne(slug, teams, score_cutoff=70)
 
             # Fallback if no close match is found
             canonical = match if match else slug
@@ -140,15 +140,15 @@ class SelectionChange:
 
 
 class Team:
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         name: str,
         league: str,
         league_color: str,
-        city: str = None,
-        subreddit: str = None,
-        abbreviation: str = None,
-        sport_radar_io_team_id: int = None,
+        city: str | None = None,
+        subreddit: str | None = None,
+        abbreviation: str | None = None,
+        sport_radar_io_team_id: int | None = None,
     ):
         self.name = name
         self.league = league.lower()

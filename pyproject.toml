@@ -1,5 +1,5 @@
 [project]
-name = "event_monitor"
+name = "snuper"
 version = "0.1.0"
 description = "Event monitoring service for sports data platforms."
 readme = "README.md"

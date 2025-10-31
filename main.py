@@ -4,17 +4,17 @@ import argparse
 import asyncio
 import pathlib
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Protocol, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Protocol
 
 from dotenv import load_dotenv
 
-from event_monitor import betmgm, bovada, draftkings, fanduel
-from event_monitor.constants import Provider, SUPPORTED_LEAGUES
+from snuper import betmgm, bovada, draftkings, fanduel
+from snuper.constants import Provider, SUPPORTED_LEAGUES
 
 load_dotenv()
 
-logger = logging.getLogger("event_monitor")
+logger = logging.getLogger("snuper")
 
 
 class ScrapeRunner(Protocol):
