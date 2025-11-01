@@ -68,8 +68,10 @@ options:
   connection flags (e.g., `--rds-uri`, `--cache-uri`).
 - When using `--sink=rds`, pass a SQLAlchemy-compatible URI via `--rds-uri` (for example
   `postgresql+psycopg://user:pass@host:5432/snuper`) and the destination table name via
-  `--rds-table`. The runner creates that table and a `<table>_snapshots` companion if
-  they do not exist.
+  `--rds-table`. The sink expects the primary table to provide `id`, `provider`, `league`,
+  `event_id`, `data` (JSON/JSONB), and `created_at` columns and manages a
+  `<table>_snapshots` companion with `provider`, `league`, `snapshot_date`, `payload`,
+  and `received_at`.
 - Restrict execution with `--league nba,mlb` for targeted runs.
 - Use `--overwrite` to replace existing daily snapshots during a rescrape.
 - DraftKings monitors honor `--interval`; other providers pace themselves.
@@ -122,8 +124,10 @@ The `scrape` workflow launches provider-specific collectors that enumerate the
 day’s playable events, normalize metadata (teams, start times, selections), and
 write snapshots to `<fs_sink_dir>/<provider>/events/YYYYMMDD-<league>.json` when `--sink=fs`. When `--sink=rds` or `--sink=cache`,
 the same payload is persisted to the selected backend instead (see Output),
-allowing monitors to bootstrap without local files. Snapshots are timestamped
-and never overwritten; reruns append a new record for comparison.
+allowing monitors to bootstrap without local files. Each run emits INFO logs
+describing how many events are queued for persistence and subsequently saved.
+Snapshots are timestamped and never overwritten; reruns append a new record for
+comparison.
 
 ### `monitor`
 
@@ -131,8 +135,9 @@ The `monitor` workflows read the latest `scrape` snapshot for each provider and 
 the stored selection IDs, and stream live odds into JSONL files under
 `<fs_sink_dir>/<provider>/odds/`. Runners emit heartbeat entries when the
 feed is idle so that quiet games remain traceable. When `--sink=rds` is supplied,
-the same deltas are persisted into the configured table and snapshots are copied
-to the `<table>_snapshots` companion for replaying historical states.
+the same deltas are persisted into the configured table (tagged with the
+provider) and snapshots are copied to the `<table>_snapshots` companion for
+replaying historical states.
 
 > Note that the usage of JSON files on disk is a local development feature.
 
@@ -170,11 +175,12 @@ and odds deltas. Each sink stores and reloads data a little differently.
 
 ### RDS sink (`--sink=rds`)
 
-- `scrape` stores serialized events in the automatically managed
-  `<table>_snapshots` table alongside `provider`, `league`, and
-  `snapshot_date` columns.
-- `monitor` inserts each odds delta into the primary `--rds-table`, including
-  the raw provider payload and normalized selection update JSON blobs.
+- `scrape` inserts one row per event into the primary `--rds-table`, filling
+  the `provider`, `league`, `event_id`, `data`, and `created_at` columns and
+  logging the batch size. The event snapshot is also written to
+  `<table>_snapshots` for historical replay.
+- `monitor` inserts each odds delta into the same primary table with the
+  provider annotated and the raw/normalized payload stored in `data`.
 - `load_snapshots` fetches the most recent snapshot per league from
   `<table>_snapshots` (respecting any `--league` filter) before runners
   reconnect.

@@ -372,15 +372,19 @@ class RdsSelectionSink(BaseSink):
         self._table = Table(
             table_name,
             self._metadata,
-            Column("ingest_id", Integer, primary_key=True, autoincrement=True),
-            Column("event_id", String, nullable=False),
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("provider", String, nullable=False),
             Column("league", String, nullable=False),
-            Column("raw_event", json_type_cls(), nullable=False),
-            Column("selection_update", json_type_cls(), nullable=False),
+            Column("event_id", String, nullable=False),
+            Column("data", json_type_cls(), nullable=False),
             # pylint: disable=not-callable
-            Column("received_at", DateTime(timezone=True), server_default=typed_func.now(), nullable=False),
+            Column("created_at", DateTime(timezone=True), server_default=typed_func.now(), nullable=False),
         )
-        self._index = Index(f"ix_{table_name}_event_id", self._table.c.event_id)
+        self._index = Index(
+            f"ix_{table_name}_provider_event",
+            self._table.c.provider,
+            self._table.c.event_id,
+        )
         snapshot_table_name = f"{table_name}_snapshots"
         self._snapshot_table = Table(
             snapshot_table_name,
@@ -422,6 +426,17 @@ class RdsSelectionSink(BaseSink):
             await asyncio.to_thread(_create)
             self._ready = True
 
+    def describe_destination(
+        self,
+        *,
+        provider: str,
+        league: str,
+        event: Event,
+        output_dir: Path | None = None,
+    ) -> str | None:
+        del provider, league, event, output_dir
+        return self._table_name
+
     async def save(
         self,
         *,
@@ -444,11 +459,14 @@ class RdsSelectionSink(BaseSink):
         def _insert() -> None:
             with self._engine.begin() as conn:
                 stmt = self._table.insert().values(
-                    event_id=record.event_id,
+                    provider=record.provider,
                     league=record.league,
-                    raw_event=record.raw_event,
-                    selection_update=record.selection_update,
-                    received_at=record.received_at,
+                    event_id=record.event_id,
+                    data={
+                        "raw_event": record.raw_event,
+                        "selection_update": record.selection_update,
+                        "received_at": record.received_at,
+                    },
                 )
                 conn.execute(stmt)
 
@@ -472,8 +490,31 @@ class RdsSelectionSink(BaseSink):
         snapshot_date = timestamp or current_stamp()
         payload = _events_to_payload(events)
 
+        rows = [
+            {
+                "provider": provider,
+                "league": league,
+                "event_id": event.event_id,
+                "data": {
+                    "snapshot_timestamp": snapshot_date,
+                    "event": event.to_dict(),
+                },
+            }
+            for event in events
+        ]
+
+        if not rows:
+            logger.info(
+                "rds sink - no events to persist for %s/%s at %s",
+                provider,
+                league,
+                snapshot_date,
+            )
+            return None
+
         def _insert_snapshot() -> None:
             with self._engine.begin() as conn:
+                conn.execute(self._table.insert(), rows)
                 stmt = self._snapshot_table.insert().values(
                     provider=provider,
                     league=league,
@@ -484,6 +525,13 @@ class RdsSelectionSink(BaseSink):
 
         try:
             await asyncio.to_thread(_insert_snapshot)
+            logger.info(
+                "rds sink - persisted %d events for %s/%s to table %s",
+                len(rows),
+                provider,
+                league,
+                self._table_name,
+            )
         except SQLAlchemyError as exc:  # pragma: no cover - database failure guard
             logger.warning("rds sink failed to save snapshot for %s/%s: %s", provider, league, exc)
         return None

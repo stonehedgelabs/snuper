@@ -141,6 +141,15 @@ class BaseEventScraper(abc.ABC):
 
             saved: Path | None = None
             if sink and provider:
+                event_count = len(events)
+                self.log.info(
+                    "%s - %s preparing to persist %d events for %s/%s",
+                    self.__class__.__name__,
+                    sink.__class__.__name__,
+                    event_count,
+                    provider,
+                    league,
+                )
                 saved = await sink.save_snapshot(
                     provider=provider,
                     league=league,

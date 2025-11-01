@@ -175,12 +175,12 @@ class BaseMonitor:
             output_dir=self.output_dir,
         )
         self.log.info(
-            "%s - fetched snapshots for %d leagues from sink",
+            "%s - fetched daily events for %d leagues from sink",
             self.__class__.__name__,
             len(snapshots),
         )
         if not snapshots:
-            self.log.warning("%s - no snapshots available from sink", self.__class__.__name__)
+            self.log.warning("%s - no daily events available from sink", self.__class__.__name__)
             await self._prune_tasks({})
             return
 
