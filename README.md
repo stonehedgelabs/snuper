@@ -28,21 +28,24 @@ snapshots, and streaming live odds updates.
 ## Usage
 
 ```text
-usage: main.py [-h] [-p PROVIDERS] -t {scrape,monitor} [-l LEAGUES] \
-               -o FS_SINK_DIR [-i INTERVAL] [--overwrite]
+usage: snuper [-h] [-p PROVIDER] -t {scrape,monitor} [-l LEAGUE] [-o FS_SINK_DIR] [-i INTERVAL] [--overwrite] [--sink {fs,rds,cache}] [--rds-uri RDS_URI] [--rds-table RDS_TABLE] [--cache-uri CACHE_URI]
+              [--cache-ttl CACHE_TTL] [--cache-max-items CACHE_MAX_ITEMS]
 
 Unified Event Monitor CLI
 
 options:
   -h, --help            show this help message and exit
-  -p PROVIDERS, --provider PROVIDERS
-                        Comma-separated sportsbook providers (omit to run all)
+  -p PROVIDER, --provider PROVIDER
+                        Comma-separated list of sportsbook providers (omit to run all)
   -t {scrape,monitor}, -task {scrape,monitor}, --task {scrape,monitor}
                         Operation to perform
-  -l LEAGUES, --league LEAGUES
-                        Comma-separated leagues to limit (nba,nfl,mlb)
+  -l LEAGUE, --league LEAGUE
+                        Comma-separated list of leagues to limit (omit for all)
   -o FS_SINK_DIR, --fs-sink-dir FS_SINK_DIR
                         Base directory for filesystem snapshots and odds logs
+  -i INTERVAL, --interval INTERVAL
+                        Refresh interval in seconds (DraftKings monitor only)
+  --overwrite           Overwrite existing snapshots instead of skipping
   --sink {fs,rds,cache}
                         Destination sink for selection updates (default: fs)
   --rds-uri RDS_URI     Database connection URI when using the rds sink
@@ -54,9 +57,6 @@ options:
                         Expiration window in seconds for cache sink entries
   --cache-max-items CACHE_MAX_ITEMS
                         Maximum list length per event stored in the cache sink
-  -i INTERVAL, --interval INTERVAL
-                        Refresh interval in seconds (DraftKings monitor only)
-  --overwrite           Replace existing snapshots instead of skipping
 ```
 
 - Providers must be supplied using their full names (e.g., `draftkings`,
@@ -79,17 +79,17 @@ options:
 Examples:
 
 ```sh
-$ poetry run python main.py --task scrape --fs-sink-dir data
+$ poetry run snuper --task scrape --fs-sink-dir data
 ```
 - Run every supported scraper for all providers and leagues, writing fresh daily snapshots.
 
 ```sh
-$ poetry run python main.py -p draftkings,betmgm --task monitor --fs-sink-dir data
+$ poetry run snuper -p draftkings,betmgm --task monitor --fs-sink-dir data
 ```
 - Start DraftKings and BetMGM monitors using their latest snapshots and default pacing.
 
 ```sh
-$ poetry run python main.py \
+$ poetry run snuper \
   --task monitor \
   --provider bovada \
   --sink rds \
@@ -100,7 +100,7 @@ $ poetry run python main.py \
   `selection_updates_snapshots` tables on first run.
 
 ```sh
-$ poetry run python main.py \
+$ poetry run snuper \
   --task monitor \
   --provider draftkings \
   --interval 45 \

@@ -53,6 +53,7 @@ exclude = '''
 
 [project.scripts]
 format = "black:main"
+snuper = "snuper.cli:main"
+
 
 [tool.poetry]
-package-mode = false
