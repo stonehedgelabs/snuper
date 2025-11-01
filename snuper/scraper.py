@@ -14,6 +14,7 @@ from tzlocal import get_localzone
 from snuper.constants import SPORTS
 from snuper.utils import current_stamp, event_filepath
 from snuper.t import Event
+from snuper.sinks import SelectionSink
 
 __all__ = ["BaseEventScraper", "ScrapeContext"]
 
@@ -105,6 +106,8 @@ class BaseEventScraper(abc.ABC):
         *,
         leagues: Sequence[str] | None = None,
         overwrite: bool = False,
+        sink: SelectionSink | None = None,
+        provider: str | None = None,
     ) -> list[Path]:
         """Scrape each configured league and persist the resulting snapshots."""
 
@@ -136,13 +139,24 @@ class BaseEventScraper(abc.ABC):
                 self.log.error("%s - failed to scrape %s: %s", self.__class__.__name__, league, exc)
                 continue
 
-            saved = self.save(
-                events,
-                league,
-                destination,
-                timestamp=context.stamp,
-                overwrite=overwrite,
-            )
+            saved: Path | None = None
+            if sink and provider:
+                saved = await sink.save_snapshot(
+                    provider=provider,
+                    league=league,
+                    events=events,
+                    timestamp=context.stamp,
+                    output_dir=destination,
+                    overwrite=overwrite,
+                )
+            else:
+                saved = self.save(
+                    events,
+                    league,
+                    destination,
+                    timestamp=context.stamp,
+                    overwrite=overwrite,
+                )
             if saved:
                 paths.append(saved)
         return paths

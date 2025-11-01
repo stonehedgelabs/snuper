@@ -14,6 +14,7 @@ from tzlocal import get_localzone
 from snuper.runner import BaseMonitor
 from snuper.scraper import BaseEventScraper, ScrapeContext
 from snuper.t import Event
+from snuper.sinks import SelectionSink
 
 CYAN = "\033[96m"
 """ANSI escape code for cyan logs."""
@@ -222,11 +223,18 @@ async def run_scrape(
     *,
     leagues: Sequence[str] | None = None,
     overwrite: bool = False,
+    sink: SelectionSink | None = None,
 ) -> None:
     """Invoke the FanDuel scraper with the provided destination."""
 
     scraper = EventScraper(output_dir)
-    await scraper.scrape_and_save_all(output_dir, leagues=leagues, overwrite=overwrite)
+    await scraper.scrape_and_save_all(
+        output_dir,
+        leagues=leagues,
+        overwrite=overwrite,
+        sink=sink,
+        provider="fanduel",
+    )
 
 
 async def run_monitor(

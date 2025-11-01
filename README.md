@@ -29,7 +29,7 @@ snapshots, and streaming live odds updates.
 
 ```text
 usage: main.py [-h] [-p PROVIDERS] -t {scrape,monitor} [-l LEAGUES] \
-               -o OUTPUT_DIR [-i INTERVAL] [--overwrite]
+               -o FS_SINK_DIR [-i INTERVAL] [--overwrite]
 
 Unified Event Monitor CLI
 
@@ -41,8 +41,19 @@ options:
                         Operation to perform
   -l LEAGUES, --league LEAGUES
                         Comma-separated leagues to limit (nba,nfl,mlb)
-  -o OUTPUT_DIR, --output-dir OUTPUT_DIR
-                        Base directory where provider artifacts are written
+  -o FS_SINK_DIR, --fs-sink-dir FS_SINK_DIR
+                        Base directory for filesystem snapshots and odds logs
+  --sink {fs,rds,cache}
+                        Destination sink for selection updates (default: fs)
+  --rds-uri RDS_URI     Database connection URI when using the rds sink
+  --rds-table RDS_TABLE
+                        Table name used by the rds sink
+  --cache-uri CACHE_URI
+                        Cache connection URI when using the cache sink
+  --cache-ttl CACHE_TTL
+                        Expiration window in seconds for cache sink entries
+  --cache-max-items CACHE_MAX_ITEMS
+                        Maximum list length per event stored in the cache sink
   -i INTERVAL, --interval INTERVAL
                         Refresh interval in seconds (DraftKings monitor only)
   --overwrite           Replace existing snapshots instead of skipping
@@ -51,8 +62,14 @@ options:
 - Providers must be supplied using their full names (e.g., `draftkings`,
   `betmgm`, `bovada`, `fanduel`). Omit `--provider` to run every available
   scraper or monitor.
-- `--output-dir` is required for all tasks; the path is resolved relative to the
-  current working directory.
+- `--fs-sink-dir` is required when `--sink=fs`; for other sinks a temporary
+  staging directory is created automatically if you omit the flag.
+- Select a destination with `--sink {fs,rds,cache}` and supply the matching
+  connection flags (e.g., `--rds-uri`, `--cache-uri`).
+- When using `--sink=rds`, pass a SQLAlchemy-compatible URI via `--rds-uri` (for example
+  `postgresql+psycopg://user:pass@host:5432/snuper`) and the destination table name via
+  `--rds-table`. The runner creates that table and a `<table>_snapshots` companion if
+  they do not exist.
 - Restrict execution with `--league nba,mlb` for targeted runs.
 - Use `--overwrite` to replace existing daily snapshots during a rescrape.
 - DraftKings monitors honor `--interval`; other providers pace themselves.
@@ -60,21 +77,32 @@ options:
 Examples:
 
 ```sh
-$ poetry run python main.py --task scrape --output-dir data
+$ poetry run python main.py --task scrape --fs-sink-dir data
 ```
 - Run every supported scraper for all providers and leagues, writing fresh daily snapshots.
 
 ```sh
-$ poetry run python main.py -p draftkings,betmgm --task monitor --output-dir data
+$ poetry run python main.py -p draftkings,betmgm --task monitor --fs-sink-dir data
 ```
 - Start DraftKings and BetMGM monitors using their latest snapshots and default pacing.
 
 ```sh
 $ poetry run python main.py \
   --task monitor \
+  --provider bovada \
+  --sink rds \
+  --rds-uri postgresql+psycopg://snuper:secret@db.example.com:5432/snuper \
+  --rds-table selection_updates
+```
+- Stream Bovada odds into PostgreSQL; the sink creates `selection_updates` and
+  `selection_updates_snapshots` tables on first run.
+
+```sh
+$ poetry run python main.py \
+  --task monitor \
   --provider draftkings \
   --interval 45 \
-  --output-dir data
+  --fs-sink-dir data
 ```
 - Monitor DraftKings only, overriding the websocket refresh cadence to 45 seconds.
 
@@ -92,16 +120,19 @@ $ poetry run python main.py \
 
 The `scrape` workflow launches provider-specific collectors that enumerate the
 day’s playable events, normalize metadata (teams, start times, selections), and
-write snapshots to `output_dir/<provider>/events/<league>/<league>-YYYYMMDD.json`.
-Snapshots are timestamped and never overwritten; reruns append a new file for
-comparison.
+write snapshots to `<fs_sink_dir>/<provider>/events/YYYYMMDD-<league>.json` when `--sink=fs`. When `--sink=rds` or `--sink=cache`,
+the same payload is persisted to the selected backend instead (see Output),
+allowing monitors to bootstrap without local files. Snapshots are timestamped
+and never overwritten; reruns append a new record for comparison.
 
 ### `monitor`
 
 The `monitor` workflows read the latest `scrape` snapshot for each provider and league, reuse
 the stored selection IDs, and stream live odds into JSONL files under
-`output_dir/<provider>/events/odds/`. Runners emit heartbeat entries when the
-feed is idle so that quiet games remain traceable.
+`<fs_sink_dir>/<provider>/odds/`. Runners emit heartbeat entries when the
+feed is idle so that quiet games remain traceable. When `--sink=rds` is supplied,
+the same deltas are persisted into the configured table and snapshots are copied
+to the `<table>_snapshots` companion for replaying historical states.
 
 > Note that the usage of JSON files on disk is a local development feature.
 
@@ -126,13 +157,39 @@ feed is idle so that quiet games remain traceable.
 
 ## Output
 
-- `scrape` snapshots are immutable JSON files that record the state of each event at
-  scrape time.
-- `monitor` snapshot streams are newline-delimited JSON (JSONL) files keyed by the associated
-  snapshot timestamp and event identifier.
-- The current sink is the local filesystem beneath `data/`. Future work will
-  route artifacts to other sinks such as PostgreSQL, Redis, or cloud object
-  storage without changing the CLI contract.
+Scrape and monitor operations share a sink interface that persists snapshots
+and odds deltas. Each sink stores and reloads data a little differently.
+
+### Filesystem sink (`--sink=fs`)
+
+- `scrape` writes snapshot JSON files to `<fs_sink_dir>/<provider>/events/YYYYMMDD-<league>.json`. Existing files are skipped unless `--overwrite` is
+  supplied.
+- `monitor` appends newline-delimited JSON records to `<fs_sink_dir>/<provider>/odds/YYYYMMDD-<league>-<event_id>.json`, capturing each selection change in order.
+- `load_snapshots` rehydrates events by reading the snapshot JSON under the
+  provider's `events` directory.
+
+### RDS sink (`--sink=rds`)
+
+- `scrape` stores serialized events in the automatically managed
+  `<table>_snapshots` table alongside `provider`, `league`, and
+  `snapshot_date` columns.
+- `monitor` inserts each odds delta into the primary `--rds-table`, including
+  the raw provider payload and normalized selection update JSON blobs.
+- `load_snapshots` fetches the most recent snapshot per league from
+  `<table>_snapshots` (respecting any `--league` filter) before runners
+  reconnect.
+
+### Cache sink (`--sink=cache`)
+
+- `scrape` writes the snapshot payload to Redis keys of the form
+  `snuper:snapshots:<provider>:<league>` and tracks the available leagues in
+  `snuper:snapshots:<provider>:leagues`, applying the configured TTL to both.
+- `monitor` pushes rolling lists of raw messages and normalized selection
+  updates to `snuper:<league>:<event_id>:raw` and
+  `snuper:<league>:<event_id>:selection`, trimming them to
+  `--cache-max-items` while refreshing the TTL.
+- `load_snapshots` reads the cached snapshot JSON for the requested leagues so
+  monitors can bootstrap without disk or database access.
 
 ## Development
 
@@ -177,9 +234,10 @@ $ poetry run pytest
 - **Provider** – A sportsbook integration (`draftkings`, `betmgm`, `bovada`,
   `fanduel`). Providers expose both scrape and monitor entry points when
   implemented.
-- **Output Directory (`output_dir`)** – The root sink supplied via `--output-dir`.
-  All snapshots and odds logs are written under this path. Designed to be
-  swapped for other sink types in future work.
+- **Sink** – Destination backend for selection snapshots and odds updates. Choose via
+  `--sink` (`fs`, `rds`, or `cache`) and pair it with the appropriate connection flags.
+- **Filesystem Sink Directory (`fs_sink_dir`)** – Root path used by the filesystem sink for
+  snapshots and odds logs when `--sink=fs`.
 - **Interval** – Optional CLI pacing for DraftKings monitoring; other providers
   manage loop timing internally (e.g., BetMGM reloads every second).
 - **Selection** – A single wager option returned by a provider (for example, a

@@ -16,6 +16,7 @@ from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from tzlocal import get_localzone
 
+from snuper.sinks import SelectionSink
 from snuper.constants import (
     YELLOW,
     MGM_DEFAULT_MONITOR_INTERVAL,
@@ -40,7 +41,6 @@ from snuper.utils import (
     format_bytes,
     format_duration,
     format_rate_per_sec,
-    odds_filepath,
 )
 
 logging.basicConfig(
@@ -468,14 +468,17 @@ class BetMGMRunner(BaseRunner):
             self.log.warning("%s - could not extract markets: %s", self.__class__.__name__, e)
             return []
 
-    async def run(self, event: Event, output_dir: pathlib.Path, league: str) -> None:
-        """Poll the BetMGM page for ``event`` and append odds snapshots."""
+    async def run(
+        self,
+        event: Event,
+        output_dir: pathlib.Path,
+        league: str,
+        provider: str,
+        sink: SelectionSink,
+    ) -> None:
+        """Poll the BetMGM page for ``event`` and persist odds snapshots through ``sink``."""
 
-        event_id = event.event_id
         self.log.info("%s - starting monitor for %s", self.__class__.__name__, event)
-
-        output_file = odds_filepath(output_dir, league, event_id)
-        output_file.parent.mkdir(parents=True, exist_ok=True)
 
         headers = {}
         start_time_wall = time.time()
@@ -484,6 +487,20 @@ class BetMGMRunner(BaseRunner):
         hits = 0
         total_bytes = 0
         self.reset_heartbeat()
+
+        destination = sink.describe_destination(
+            provider=provider,
+            league=league,
+            event=event,
+            output_dir=output_dir,
+        )
+        if destination:
+            self.log.info(
+                "%s - persisting odds data for %s to %s",
+                self.__class__.__name__,
+                event,
+                destination,
+            )
 
         def current_stats() -> dict[str, Any]:
             return {
@@ -511,70 +528,77 @@ class BetMGMRunner(BaseRunner):
 
             self.log.info("%s - monitoring loop started for %s...", self.__class__.__name__, event)
 
-            with open(output_file, "a", encoding="utf-8") as f:
-                error_count = 0
-                while True:
-                    try:
-                        if asyncio.current_task() and asyncio.current_task().cancelled():
-                            self.log.info(
-                                "%s - runner for %s cancelled, shutting down.", self.__class__.__name__, event
-                            )
-                            break
+            error_count = 0
+            while True:
+                try:
+                    if asyncio.current_task() and asyncio.current_task().cancelled():
+                        self.log.info("%s - runner for %s cancelled, shutting down.", self.__class__.__name__, event)
+                        break
 
-                        await page.reload(wait_until="domcontentloaded", timeout=30000)
-                        markets = await self.extract_markets(page)
+                    await page.reload(wait_until="domcontentloaded", timeout=30000)
+                    markets = await self.extract_markets(page)
 
-                        if markets:
-                            changes = transform_markets_to_records(event, markets)
+                    if markets:
+                        changes = transform_markets_to_records(event, markets)
+                        if changes:
                             for change in changes:
                                 hits += 1
                                 payload = change.to_json()
                                 total_bytes += len(payload.encode("utf-8")) + 1
-                                f.write(payload + "\n")
-                            f.flush()
+                                change_payload = json.loads(payload)
+                                await sink.save(
+                                    provider=provider,
+                                    league=league,
+                                    event=event,
+                                    raw_event=markets,
+                                    selection_update=change_payload,
+                                    output_dir=output_dir,
+                                )
                             last_event_time = time.time()
                             event_count += 1
 
-                        stats = current_stats()
-                        if event_count % self.event_log_interval == 0 and event_count > 0:
-                            self.maybe_emit_heartbeat(event, force=True, stats=stats)
+                    stats = current_stats()
+                    if event_count % self.event_log_interval == 0 and event_count > 0:
+                        self.maybe_emit_heartbeat(event, force=True, stats=stats)
 
-                        if time.time() - last_event_time > self.max_idle_seconds:
-                            self.log.info(
-                                "%s - no updates for %d seconds; assuming %s has ended.",
-                                self.__class__.__name__,
-                                MAX_IDLE_SECONDS,
-                                event,
-                            )
-                            self.maybe_emit_heartbeat(event, force=True, stats=stats)
-                            break
+                    if time.time() - last_event_time > self.max_idle_seconds:
+                        self.log.info(
+                            "%s - no updates for %d seconds; assuming %s has ended.",
+                            self.__class__.__name__,
+                            MAX_IDLE_SECONDS,
+                            event,
+                        )
+                        self.maybe_emit_heartbeat(event, force=True, stats=stats)
+                        break
 
-                        self.maybe_emit_heartbeat(event, stats=stats)
-                        await asyncio.sleep(self.loop_interval)
-                        error_count = 0
+                    self.maybe_emit_heartbeat(event, stats=stats)
+                    await asyncio.sleep(self.loop_interval)
+                    error_count = 0
 
-                    except Exception as e:
-                        error_count += 1
-                        self.log.warning("%s - error monitoring %s: %s", self.__class__.__name__, event, e)
-                        current = current_stats()
-                        self.maybe_emit_heartbeat(event, stats=current)
-                        if error_count > MAX_RUNNER_ERRORS:
-                            self.log.error(
-                                "%s - assuming game ended for %s after %d consecutive errors.",
-                                self.__class__.__name__,
-                                event,
-                                error_count,
-                            )
-                            self.maybe_emit_heartbeat(event, force=True, stats=current)
-                            break
-                        await asyncio.sleep(self.loop_interval)
+                except Exception as e:
+                    error_count += 1
+                    self.log.warning("%s - error monitoring %s: %s", self.__class__.__name__, event, e)
+                    current = current_stats()
+                    self.maybe_emit_heartbeat(event, stats=current)
+                    if error_count > MAX_RUNNER_ERRORS:
+                        self.log.error(
+                            "%s - assuming game ended for %s after %d consecutive errors.",
+                            self.__class__.__name__,
+                            event,
+                            error_count,
+                        )
+                        self.maybe_emit_heartbeat(event, force=True, stats=current)
+                        break
+                    await asyncio.sleep(self.loop_interval)
 
-                        if time.time() - last_event_time > self.max_idle_seconds:
-                            self.log.info(
-                                "%s - no updates for 2 minutes; assuming %s has ended.", self.__class__.__name__, event
-                            )
-                            self.maybe_emit_heartbeat(event, force=True, stats=current)
-                            break
+                    if time.time() - last_event_time > self.max_idle_seconds:
+                        self.log.info(
+                            "%s - no updates for 2 minutes; assuming %s has ended.",
+                            self.__class__.__name__,
+                            event,
+                        )
+                        self.maybe_emit_heartbeat(event, force=True, stats=current)
+                        break
 
             await browser.close()
             self.log.info("%s - stopped monitor for %s", self.__class__.__name__, event)
@@ -616,6 +640,9 @@ class BetMGMMonitor(BaseMonitor):
         concurrency: int = 10,
         *,
         leagues: Sequence[str] | None = None,
+        sink: SelectionSink,
+        provider: str,
+        output_dir: pathlib.Path | None = None,
     ) -> None:
         """Initialise monitor state with snapshot directory and policy."""
         super().__init__(
@@ -624,6 +651,9 @@ class BetMGMMonitor(BaseMonitor):
             concurrency=concurrency,
             log_color=YELLOW,
             leagues=leagues,
+            sink=sink,
+            provider=provider,
+            output_dir=output_dir,
         )
         self.log.info("%s - monitor using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -633,11 +663,18 @@ async def run_scrape(
     *,
     leagues: Sequence[str] | None = None,
     overwrite: bool = False,
+    sink: SelectionSink | None = None,
 ) -> None:
     """Invoke the BetMGM scraper with the supplied destination."""
 
     scraper = BetMGMEventScraper(output_dir)
-    await scraper.scrape_and_save_all(output_dir, leagues=leagues, overwrite=overwrite)
+    await scraper.scrape_and_save_all(
+        output_dir,
+        leagues=leagues,
+        overwrite=overwrite,
+        sink=sink,
+        provider="betmgm",
+    )
 
 
 async def run_monitor(
@@ -645,10 +682,19 @@ async def run_monitor(
     *,
     interval: int = MGM_MONITOR_SWEEP_INTERVAL,
     leagues: Sequence[str] | None = None,
+    sink: SelectionSink,
+    provider: str,
+    output_dir: pathlib.Path | None = None,
 ) -> None:
     """Start BetMGM monitors and continue refreshing snapshot awareness."""
 
-    monitor = BetMGMMonitor(input_dir, leagues=leagues)
+    monitor = BetMGMMonitor(
+        input_dir,
+        leagues=leagues,
+        sink=sink,
+        provider=provider,
+        output_dir=output_dir,
+    )
     logger.info("starting BetMGM monitor loop (interval=%ss)...", interval)
 
     while True:

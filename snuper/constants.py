@@ -24,7 +24,7 @@ SUPPORTED_LEAGUES = ["nba", "nfl", "mlb"]
 """Canonical list of leagues supported across scrapers."""
 
 # Game lifecycle defaults (seconds) - this is an upper bound on game time.
-GAME_RUNTIME_SECONDS = 14400
+GAME_RUNTIME_SECONDS = 3.5 * 3600
 """Default event duration used to determine when games expire."""
 
 # DraftKings configuration
