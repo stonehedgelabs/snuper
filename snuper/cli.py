@@ -198,11 +198,18 @@ async def dispatch(args: argparse.Namespace) -> None:
         fs_sink_dir = temp_fs_sink_dir
         logger.debug("No --fs-sink-dir supplied; using temporary staging directory %s", fs_sink_dir)
 
+    rds_selection_table: str | None = None
+    if sink_type is SinkType.RDS and task == "monitor":
+        if args.rds_table is None:
+            raise ValueError("--rds-table is required when --task monitor uses the rds sink")
+        rds_selection_table = f"{args.rds_table}_selection_changes"
+
     sink = build_sink(
         sink_type=sink_type,
         fs_sink_dir=fs_sink_dir if sink_type is SinkType.FS else None,
         rds_uri=args.rds_uri,
         rds_table=args.rds_table,
+        rds_selection_table=rds_selection_table,
         cache_uri=args.cache_uri,
         cache_ttl=args.cache_ttl,
         cache_max_items=args.cache_max_items,

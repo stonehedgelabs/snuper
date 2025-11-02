@@ -131,7 +131,7 @@ def is_league_matchup(path: str, league: str) -> bool:
     return len(matched_teams) == 2
 
 
-def extract_bovada_odds(event_id: str, data: dict, league: str) -> dict:
+def extract_bovada_odds(event_id: str, data: dict) -> dict:
     results = []
     for market in data.get("markets", []):
         all_market_period_descrs.add(market.get("period", {}).get("abbreviation"))
@@ -460,7 +460,7 @@ class BovadaRunner(BaseRunner):
                             _header, body = payload_text.split("|", 1)
                             msg_data = json.loads(body)
 
-                            hits = extract_bovada_odds(event.event_id, msg_data, league)
+                            hits = extract_bovada_odds(event.event_id, msg_data)
                             if hits:
                                 odds_hits += len(hits)
                                 last_event_time = time.time()

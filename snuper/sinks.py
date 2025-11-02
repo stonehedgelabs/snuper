@@ -355,13 +355,14 @@ class FilesystemSelectionSink(BaseSink):
 class RdsSelectionSink(BaseSink):
     """Persist odds updates into a relational data store."""
 
-    def __init__(self, *, uri: str, table_name: str) -> None:
+    def __init__(self, *, uri: str, table_name: str, selection_table_name: str | None = None) -> None:
         super().__init__()
         if create_engine is None or MetaData is None or JSON is None or func is None:
             msg = "sqlalchemy must be installed to use the RDS sink"
             raise RuntimeError(msg)
         self._engine = create_engine(uri, future=True)
         self._table_name = table_name
+        self._selection_table_name = selection_table_name or table_name
         self._metadata = MetaData()
         typed_func = cast(Any, func)
         if typed_func is None:
@@ -386,6 +387,26 @@ class RdsSelectionSink(BaseSink):
             self._table.c.provider,
             self._table.c.event_id,
         )
+        if self._selection_table_name == table_name:
+            self._selection_table = self._table
+            self._selection_index = self._index
+        else:
+            self._selection_table = Table(
+                self._selection_table_name,
+                self._metadata,
+                Column("id", Integer, primary_key=True, autoincrement=True),
+                Column("provider", String, nullable=False),
+                Column("league", String, nullable=False),
+                Column("event_id", String, nullable=False),
+                Column("data", json_type_cls(), nullable=False),
+                # pylint: disable=not-callable
+                Column("created_at", DateTime(timezone=True), server_default=typed_func.now(), nullable=False),
+            )
+            self._selection_index = Index(
+                f"ix_{self._selection_table_name}_provider_event",
+                self._selection_table.c.provider,
+                self._selection_table.c.event_id,
+            )
         snapshot_table_name = f"{table_name}_snapshots"
         self._snapshot_table = Table(
             snapshot_table_name,
@@ -417,11 +438,16 @@ class RdsSelectionSink(BaseSink):
                 return
 
             def _create() -> None:
+                tables_to_create = [self._table, self._snapshot_table]
+                if self._selection_table is not self._table:
+                    tables_to_create.append(self._selection_table)
                 self._metadata.create_all(
                     self._engine,
-                    tables=[self._table, self._snapshot_table],
+                    tables=tables_to_create,
                 )
                 self._index.create(self._engine, checkfirst=True)
+                if self._selection_table is not self._table:
+                    self._selection_index.create(self._engine, checkfirst=True)
                 self._snapshot_index.create(self._engine, checkfirst=True)
 
             await asyncio.to_thread(_create)
@@ -436,7 +462,7 @@ class RdsSelectionSink(BaseSink):
         output_dir: Path | None = None,
     ) -> str | None:
         del provider, league, event, output_dir
-        return self._table_name
+        return self._selection_table_name
 
     async def save(
         self,
@@ -459,7 +485,7 @@ class RdsSelectionSink(BaseSink):
 
         def _insert() -> None:
             with self._engine.begin() as conn:
-                stmt = self._table.insert().values(
+                stmt = self._selection_table.insert().values(
                     provider=record.provider,
                     league=record.league,
                     event_id=record.event_id,
@@ -854,6 +880,7 @@ def build_sink(
     fs_sink_dir: Path | None = None,
     rds_uri: str | None = None,
     rds_table: str | None = None,
+    rds_selection_table: str | None = None,
     cache_uri: str | None = None,
     cache_ttl: int | None = None,
     cache_max_items: int | None = None,
@@ -865,7 +892,11 @@ def build_sink(
     if sink_type is SinkType.RDS:
         if not rds_uri or not rds_table:
             raise ValueError("rds sink requires rds_uri and rds_table")
-        return RdsSelectionSink(uri=rds_uri, table_name=rds_table)
+        return RdsSelectionSink(
+            uri=rds_uri,
+            table_name=rds_table,
+            selection_table_name=rds_selection_table,
+        )
     if sink_type is SinkType.CACHE:
         if not cache_uri or cache_ttl is None or cache_max_items is None:
             raise ValueError("cache sink requires cache_uri, cache_ttl, and cache_max_items")
