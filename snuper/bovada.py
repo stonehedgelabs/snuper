@@ -138,7 +138,7 @@ def extract_bovada_odds(event_id: str, data: dict, league: str) -> dict:
         all_market_period_abbrvs.add(market.get("period", {}).get("description"))
         all_market_descriptions.add(market.get("description"))
         if (
-            market.get("period", {}).get("description") == description_filter(league)
+            market.get("period", {}).get("description") in {"Game", "Live Game"}
             and market.get("period", {}).get("abbreviation") == "G"
             and market.get("description") in {"Spread", "Point Spread", "Moneyline"}
         ):
@@ -254,7 +254,7 @@ class BovadaEventScraper(BaseEventScraper):
                         for market in dg.get("markets", []):
                             period = market.get("period", {})
                             if (
-                                period.get("description") == description_filter(context.league)
+                                period.get("description") in {"Game", "Live Game"}
                                 and period.get("abbreviation") == "G"
                                 and period.get("main", False)
                             ):

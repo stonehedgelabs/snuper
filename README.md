@@ -99,6 +99,17 @@ $ poetry run snuper \
 - Stream Bovada odds into PostgreSQL; the sink creates `selection_updates` and
   `selection_updates_snapshots` tables on first run.
 
+### RDS table naming
+
+When you pass `--rds-table`, the RDS sink uses that value for both daily
+snapshots *and* streaming selection changes. It stores odds updates in the table
+you provide and automatically manages a companion `<table>_snapshots` table for
+the daily event payloads. Because of this coupling, the same `--rds-table`
+value must be supplied to both `--task scrape` and `--task monitor`; mixing
+different names means the monitor will look in an empty table and skip all
+events. Pick a prefix you like (for example `snuper_events`) and stick with it
+for every CLI invocation so both tasks stay in sync.
+
 ```sh
 $ poetry run snuper \
   --task monitor \

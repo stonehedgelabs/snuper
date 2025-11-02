@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import contextlib
+import datetime as dt
 import logging
 import time
 from pathlib import Path
@@ -101,6 +102,7 @@ class BaseMonitor:
         self._league_filter = {league.lower() for league in leagues} if leagues else None
         self.provider = provider
         self.sink = sink
+        self.local_tz = get_localzone()
 
     def event_key(self, event: Event) -> str:
         """Build a unique key used to track active runner tasks."""
@@ -110,7 +112,23 @@ class BaseMonitor:
     def should_monitor(self, event: Event) -> bool:
         """Return ``True`` if the event has started and is still live."""
 
-        return event.has_started() and not event.is_finished()
+        start_time = event.start_time
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=dt.timezone.utc)
+            event.start_time = start_time
+        local_start_time = start_time.astimezone(self.local_tz)
+        now_local = dt.datetime.now(self.local_tz)
+
+        if now_local < local_start_time:
+            self.log.info(
+                "%s - not starting monitor because %s start time %s (local timezone of start_time) has not started yet",
+                self.__class__.__name__,
+                event,
+                local_start_time.isoformat(),
+            )
+            return False
+
+        return not event.is_finished()
 
     async def _prune_tasks(self, active_ids: dict[str, set[str]]) -> None:
         """Stop runners whose associated events no longer appear live."""

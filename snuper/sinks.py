@@ -215,14 +215,15 @@ def _events_to_payload(events: Sequence[Event]) -> list[dict[str, Any]]:
 
 
 def _event_from_dict(payload: dict[str, Any]) -> Event:
-    start_time = dt.datetime.fromisoformat(payload["start_time"])
-    away = tuple(payload["away"])
-    home = tuple(payload["home"])
-    selections = payload.get("selections")
+    source = payload.get("event", payload)
+    start_time = dt.datetime.fromisoformat(source["start_time"])
+    away = tuple(source["away"])
+    home = tuple(source["home"])
+    selections = source.get("selections")
     return Event(
-        payload["event_id"],
-        payload["league"],
-        payload["event_url"],
+        source["event_id"],
+        source["league"],
+        source["event_url"],
         start_time,
         away,
         home,
@@ -327,7 +328,7 @@ class FilesystemSelectionSink(BaseSink):
             return {}
         stamp = timestamp or current_stamp()
         events_dir = root / "events"
-        league_filter = {league.lower() for league in leagues} if leagues else None
+        league_filter: set[str] | None = {league.lower() for league in leagues} if leagues else None
 
         def _read() -> dict[str, list[Event]]:
             if not events_dir.exists():
@@ -564,8 +565,10 @@ class RdsSelectionSink(BaseSink):
                     self._snapshot_table.c.received_at.desc(),
                 )
             )
-            if league_filter:
-                stmt = stmt.where(self._snapshot_table.c.league.in_(league_filter))
+            active_league_filter: set[str] | None = set(league_filter) if league_filter is not None else None
+
+            if active_league_filter is not None:
+                stmt = stmt.where(self._snapshot_table.c.league.in_(active_league_filter))
             if snapshot_date:
                 stmt = stmt.where(self._snapshot_table.c.snapshot_date == snapshot_date)
 
@@ -573,6 +576,84 @@ class RdsSelectionSink(BaseSink):
                 rows = conn.execute(stmt).all()
 
             results: dict[str, list[Event]] = {}
+            if not rows:
+                logger.info(
+                    "rds sink - read 0 events from scrape output table for provider %s; league filter=%s snapshot_date=%s",
+                    provider,
+                    sorted(active_league_filter) if active_league_filter is not None else None,
+                    snapshot_date,
+                )
+                fallback_stmt = (
+                    select(
+                        self._table.c.league,
+                        self._table.c.event_id,
+                        self._table.c.data,
+                        self._table.c.created_at,
+                    )
+                    .where(self._table.c.provider == provider)
+                    .order_by(
+                        self._table.c.league,
+                        self._table.c.created_at.desc(),
+                        self._table.c.event_id,
+                    )
+                )
+                if active_league_filter is not None:
+                    fallback_stmt = fallback_stmt.where(self._table.c.league.in_(active_league_filter))
+
+                with self._engine.begin() as conn:
+                    fallback_rows = conn.execute(fallback_stmt).all()
+
+                logger.info(
+                    "rds sink - fallback fetched %d rows for provider %s",
+                    len(fallback_rows),
+                    provider,
+                )
+
+                per_league_events: dict[str, dict[str, Event]] = {}
+
+                for row in fallback_rows:
+                    league_value = (row.league or "").lower()
+                    if active_league_filter is not None and league_value not in active_league_filter:
+                        continue
+                    data_payload = row.data or {}
+                    event_payload = data_payload.get("event", data_payload)
+                    if not isinstance(event_payload, dict):
+                        logger.debug(
+                            "rds sink - skipping row for %s/%s due to unexpected payload format",
+                            provider,
+                            league_value,
+                        )
+                        continue
+                    try:
+                        event_obj = _event_from_dict(event_payload)
+                    except Exception as exc:  # pragma: no cover - defensive guard
+                        logger.warning(
+                            "rds sink - failed to parse event payload for %s/%s: %s",
+                            provider,
+                            league_value,
+                            exc,
+                        )
+                        continue
+                    bucket = per_league_events.setdefault(league_value, {})
+                    if event_obj.event_id in bucket:
+                        continue
+                    bucket[event_obj.event_id] = event_obj
+
+                for league_value, league_events in per_league_events.items():
+                    ordered = sorted(league_events.values(), key=lambda item: item.start_time)
+                    results[league_value] = ordered
+                    logger.info(
+                        "rds sink - read %d events from scrape output table fallback for %s/%s",
+                        len(ordered),
+                        provider,
+                        league_value,
+                    )
+                logger.info(
+                    "rds sink - returning %d leagues to monitor for provider %s",
+                    len(results),
+                    provider,
+                )
+                return results
             for row in rows:
                 league_value = row.league.lower()
                 if league_value in results:
@@ -586,6 +667,17 @@ class RdsSelectionSink(BaseSink):
                         continue
                 events = [_event_from_dict(item) for item in payload]
                 results[league_value] = events
+                logger.info(
+                    "rds sink - read %d events from scrape output table for %s/%s",
+                    len(events),
+                    provider,
+                    league_value,
+                )
+            logger.info(
+                "rds sink - returning %d leagues to monitor for provider %s",
+                len(results),
+                provider,
+            )
             return results
 
         try:
