@@ -576,7 +576,7 @@ class DraftKingsRunner(BaseRunner):
                     while True:
                         if time.time() - last_event_time > DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT:
                             self.log.info(
-                                "%s - no updates for %d seconds; assuming %s has ended.",
+                                "%s - no updates for %d seconds; assuming %s is experiencing a pause in play (e.g., halftime, timeout, etc).",
                                 self.__class__.__name__,
                                 MAX_IDLE_SECONDS,
                                 event,

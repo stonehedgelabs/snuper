@@ -563,7 +563,7 @@ class BetMGMRunner(BaseRunner):
 
                     if time.time() - last_event_time > self.max_idle_seconds:
                         self.log.info(
-                            "%s - no updates for %d seconds; assuming %s has ended.",
+                            "%s - no updates for %d seconds; assuming %s is experiencing a pause in play (e.g., halftime, timeout, etc).",
                             self.__class__.__name__,
                             MAX_IDLE_SECONDS,
                             event,
@@ -593,7 +593,7 @@ class BetMGMRunner(BaseRunner):
 
                     if time.time() - last_event_time > self.max_idle_seconds:
                         self.log.info(
-                            "%s - no updates for 2 minutes; assuming %s has ended.",
+                            "%s - no updates for 2 minutes; assuming %s is experiencing a pause in play (e.g., halftime, timeout, etc).",
                             self.__class__.__name__,
                             event,
                         )

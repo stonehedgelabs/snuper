@@ -417,7 +417,7 @@ class BovadaRunner(BaseRunner):
                         while True:
                             if time.time() - last_event_time > BOVADA_MAX_TIME_SINCE_LAST_EVENT:
                                 self.log.info(
-                                    "%s - no updates for %d seconds; assuming %s has ended.",
+                                    "%s - no updates for %d seconds; assuming %s is experiencing a pause in play (e.g., halftime, timeout, etc).",
                                     self.__class__.__name__,
                                     BOVADA_MAX_TIME_SINCE_LAST_EVENT,
                                     event,

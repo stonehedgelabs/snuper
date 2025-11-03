@@ -1,0 +1,75 @@
+PROPRIETARY LICENSE AGREEMENT
+
+Copyright (c) 2025 Stonehedge Labs. All rights reserved.
+
+This Proprietary License Agreement ("Agreement") is entered into by and between
+Stonehedge Labs ("Licensor") and Midgame, including any of its parents,
+subsidiaries, affiliates, successors, or assigns ("Licensee"). Licensor and
+Licensee may be referred to individually as a "Party" and collectively as the
+"Parties."
+
+1. GRANT OF LICENSE
+Subject to the terms and conditions of this Agreement, Licensor hereby grants to
+Licensee a limited, non-exclusive, non-transferable, revocable, and royalty-free
+license to use, reproduce, modify, and deploy the software and all related
+materials contained in this repository (collectively, the "Software") solely for
+Licensee's internal business operations.
+
+2. CONDITION OF LICENSE
+This license is expressly conditioned upon the continued existence of an active
+partnership, employment, or contractual relationship between Licensor, or its
+principal, Rashad Alston (GitHub username "ra0x3"), and Licensee. In the event
+such relationship terminates for any reason, this license shall immediately become
+subject to review and may be revoked, modified, or renegotiated at Licensor's sole
+and absolute discretion.
+
+3. OWNERSHIP AND INTELLECTUAL PROPERTY
+All right, title, and interest, including all intellectual property and moral
+rights, in and to the Software shall remain vested exclusively in Licensor. No
+rights or licenses are granted to Licensee except as expressly set forth herein.
+Nothing in this Agreement shall be construed to convey or transfer any ownership
+interest in the Software to Licensee.
+
+4. RESTRICTIONS ON USE
+Licensee shall not sublicense, distribute, assign, sell, lease, loan, publicly
+display, or otherwise make available the Software, in whole or in part, to any
+third party without the prior written authorization of Licensor. Licensee shall not
+remove, obscure, or alter any proprietary notices or legends contained in the
+Software.
+
+5. TERMINATION
+Licensor may, at its sole discretion, terminate this Agreement and the license
+granted herein immediately upon written notice if (a) the condition set forth in
+Section 2 is no longer satisfied, or (b) Licensee breaches any provision of this
+Agreement. Upon termination, Licensee shall immediately cease all use of the
+Software, permanently delete all copies in its possession, and certify in writing
+to Licensor that such deletion has been completed.
+
+6. DISCLAIMER OF WARRANTIES
+THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OF ANY KIND, WHETHER EXPRESS,
+IMPLIED, OR STATUTORY, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+IN NO EVENT SHALL LICENSOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS OR REVENUE, ARISING
+OUT OF OR RELATED TO THIS AGREEMENT OR THE USE OF THE SOFTWARE, EVEN IF LICENSOR
+HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+8. GOVERNING LAW
+This Agreement shall be governed by and construed in accordance with the laws of
+the State of North Carolina, without regard to its conflict-of-law principles. Any
+legal action or proceeding arising under or relating to this Agreement shall be
+brought exclusively in the state or federal courts located within the State of
+North Carolina, and each Party hereby irrevocably submits to the jurisdiction and
+venue of such courts.
+
+9. ENTIRE AGREEMENT
+This Agreement constitutes the entire agreement between the Parties concerning the
+subject matter hereof and supersedes all prior or contemporaneous communications,
+representations, or understandings, whether oral or written. No amendment or
+modification of this Agreement shall be valid unless made in writing and executed
+by both Parties.
+
+By accessing, using, or deploying the Software, Licensee acknowledges that it has
+read, understood, and agrees to be bound by the terms of this Agreement.
