@@ -680,6 +680,7 @@ class RdsSelectionSink(BaseSink):
                     provider,
                 )
                 return results
+
             for row in rows:
                 league_value = row.league.lower()
                 if league_value in results:

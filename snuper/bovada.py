@@ -15,6 +15,7 @@ import websockets
 from snuper.sinks import SelectionSink
 from snuper.constants import (
     CYAN,
+    YELLOW,
     SUPPORTED_LEAGUES,
     MGM_NBA_TEAMS,
     MGM_MLB_TEAMS,
@@ -42,7 +43,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [%(lineno)s]: %(message)s",
 )
-logger = configure_colored_logger(__name__, CYAN)
+logger = configure_colored_logger(__name__, YELLOW)
 
 
 all_market_period_descrs = set()
