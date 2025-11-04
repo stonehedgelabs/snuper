@@ -16,12 +16,12 @@ from snuper.utils import current_stamp, event_filepath, load_events, odds_filepa
 
 try:  # pragma: no cover - optional dependency imports
     from sqlalchemy import Column, DateTime, Index, Integer, MetaData, String, Table, create_engine, func, select
-    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.types import JSON
 except ImportError:  # pragma: no cover - handled lazily when sink unused
     Column = DateTime = Index = Integer = MetaData = String = Table = create_engine = func = select = None
-    JSONB = JSON = SQLAlchemyError = None
+    JSONB = JSON = SQLAlchemyError = pg_insert = None
 
 try:  # pragma: no cover - optional dependency imports
     from redis.asyncio import Redis
@@ -371,6 +371,7 @@ class RdsSelectionSink(BaseSink):
             json_type_cls = JSONB
         else:
             json_type_cls = JSON
+        self._func: Any = typed_func
         self._table = Table(
             table_name,
             self._metadata,
@@ -380,12 +381,19 @@ class RdsSelectionSink(BaseSink):
             Column("event_id", String, nullable=False),
             Column("data", json_type_cls(), nullable=False),
             # pylint: disable=not-callable
-            Column("created_at", DateTime(timezone=True), server_default=typed_func.now(), nullable=False),
+            Column("created_at", DateTime(timezone=True), server_default=self._func.now(), nullable=False),
         )
         self._index = Index(
             f"ix_{table_name}_provider_event",
             self._table.c.provider,
             self._table.c.event_id,
+        )
+        self._upsert_index = Index(
+            f"ux_{table_name}_provider_league_event",
+            self._table.c.provider,
+            self._table.c.league,
+            self._table.c.event_id,
+            unique=True,
         )
         if self._selection_table_name == table_name:
             self._selection_table = self._table
@@ -400,7 +408,7 @@ class RdsSelectionSink(BaseSink):
                 Column("event_id", String, nullable=False),
                 Column("data", json_type_cls(), nullable=False),
                 # pylint: disable=not-callable
-                Column("created_at", DateTime(timezone=True), server_default=typed_func.now(), nullable=False),
+                Column("created_at", DateTime(timezone=True), server_default=self._func.now(), nullable=False),
             )
             self._selection_index = Index(
                 f"ix_{self._selection_table_name}_provider_event",
@@ -417,7 +425,7 @@ class RdsSelectionSink(BaseSink):
             Column("snapshot_date", String, nullable=False),
             Column("payload", json_type_cls(), nullable=False),
             # pylint: disable=not-callable
-            Column("received_at", DateTime(timezone=True), server_default=typed_func.now(), nullable=False),
+            Column("received_at", DateTime(timezone=True), server_default=self._func.now(), nullable=False),
         )
         self._snapshot_index = Index(
             f"ix_{snapshot_table_name}_provider_league",
@@ -427,6 +435,7 @@ class RdsSelectionSink(BaseSink):
         )
         self._ready = False
         self._lock: asyncio.Lock | None = None
+        self._supports_upsert = self._engine.dialect.name == "postgresql" and pg_insert is not None
 
     async def _prepare(self) -> None:
         if self._ready:
@@ -446,6 +455,7 @@ class RdsSelectionSink(BaseSink):
                     tables=tables_to_create,
                 )
                 self._index.create(self._engine, checkfirst=True)
+                self._upsert_index.create(self._engine, checkfirst=True)
                 if self._selection_table is not self._table:
                     self._selection_index.create(self._engine, checkfirst=True)
                 self._snapshot_index.create(self._engine, checkfirst=True)
@@ -541,7 +551,22 @@ class RdsSelectionSink(BaseSink):
 
         def _insert_snapshot() -> None:
             with self._engine.begin() as conn:
-                conn.execute(self._table.insert(), rows)
+                if self._supports_upsert:
+                    stmt = pg_insert(self._table).values(rows)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=[
+                            self._table.c.provider,
+                            self._table.c.league,
+                            self._table.c.event_id,
+                        ],
+                        set_={
+                            "data": stmt.excluded.data,
+                            "created_at": self._func.now(),  # pylint: disable=not-callable
+                        },
+                    )
+                    conn.execute(stmt)
+                else:
+                    conn.execute(self._table.insert(), rows)
                 stmt = self._snapshot_table.insert().values(
                     provider=provider,
                     league=league,

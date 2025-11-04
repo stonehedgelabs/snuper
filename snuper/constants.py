@@ -31,7 +31,7 @@ GAME_RUNTIME_SECONDS = 3.5 * 3600
 DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
 """Primary DraftKings websocket endpoint for odds streaming."""
 
-BOVADA_EVENT_LOG_INTERVAL = 250
+BOVADA_EVENT_LOG_INTERVAL = 200
 """Frequency for heartbeat logging of Bovada websocket events."""
 
 BOVADA_HEARTBEAT_SECONDS = 60
@@ -49,7 +49,7 @@ DRAFTKINGS_DEFAULT_MONITOR_INTERVAL = 30
 DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT = 60 * 10
 """Number of idle seconds tolerated before assuming a game ended."""
 
-DRAFTKINGS_EVENT_LOG_INTERVAL = 500
+DRAFTKINGS_EVENT_LOG_INTERVAL = 1000
 """Frequency for heartbeat logging of DraftKings websocket events."""
 
 DRAFTKINGS_HEARTBEAT_SECONDS = 60

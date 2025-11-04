@@ -103,7 +103,7 @@ def is_league_matchup(path: str, league: str) -> bool:
     path = path.lower().strip()
 
     def extract_mascots(items: set) -> list[str]:
-        return [item.split("-")[-1] for item in items]
+        return [f"-{item.split("-")[-1]}" for item in items]
 
     # Map league identifiers to team sets
     league_teams = {
@@ -127,7 +127,6 @@ def is_league_matchup(path: str, league: str) -> bool:
         parts = parts[:-1]
     slug = "-".join(parts)
 
-    # Count how many known teams appear in this slug
     matched_teams = [team for team in league_teams if team in slug]
     return len(matched_teams) == 2
 
@@ -317,7 +316,7 @@ class BovadaRunner(BaseRunner):
     """Stream Bovada websocket messages and emit raw payload logs."""
 
     def __init__(self) -> None:
-        super().__init__(heartbeat_interval=BOVADA_HEARTBEAT_SECONDS, log_color=CYAN)
+        super().__init__(heartbeat_interval=BOVADA_HEARTBEAT_SECONDS, log_color=YELLOW)
         self.url = "wss://services.bovada.lv/services/sports/subscription/57858489-9422-6222-5982-488405165904?X-Atmosphere-tracking-id=0&X-Atmosphere-Framework=3.1.0-javascript&X-Atmosphere-Transport=websocket"
         self.headers = {
             "accept-encoding": "gzip, deflate, br, zstd",

@@ -2,9 +2,9 @@ name: Daily DraftKings Event Scraper
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 10 * * *"  # 6am ET (Daylight Time)
-    - cron: "0 11 * * *"  # 6am ET (Standard Time)
+#  schedule:
+#    - cron: "0 10 * * *"  # 6am ET (Daylight Time)
+#    - cron: "0 11 * * *"  # 6am ET (Standard Time)
 
 jobs:
   scrape:
