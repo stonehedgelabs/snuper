@@ -472,7 +472,7 @@ class BovadaRunner(BaseRunner):
                                         provider=provider,
                                         league=league,
                                         event=event,
-                                        raw_event=payload_text,
+                                        raw_event=payload_bytes,
                                         selection_update=change_payload,
                                         output_dir=output_dir,
                                     )

@@ -15,12 +15,24 @@ from snuper.t import Event
 from snuper.utils import current_stamp, event_filepath, load_events, odds_filepath
 
 try:  # pragma: no cover - optional dependency imports
-    from sqlalchemy import Column, DateTime, Index, Integer, MetaData, String, Table, create_engine, func, select
+    from sqlalchemy import (
+        Column,
+        DateTime,
+        Index,
+        Integer,
+        LargeBinary,
+        MetaData,
+        String,
+        Table,
+        create_engine,
+        func,
+        select,
+    )
     from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.types import JSON
 except ImportError:  # pragma: no cover - handled lazily when sink unused
-    Column = DateTime = Index = Integer = MetaData = String = Table = create_engine = func = select = None
+    Column = DateTime = Index = Integer = LargeBinary = MetaData = String = Table = create_engine = func = select = None
     JSONB = JSON = SQLAlchemyError = pg_insert = None
 
 try:  # pragma: no cover - optional dependency imports
@@ -93,6 +105,7 @@ class _SinkRecord:
     league: str
     provider: str
     raw_event: Any
+    raw_data: bytes | None
     selection_update: dict[str, Any]
     received_at: str
 
@@ -165,6 +178,19 @@ def _iso_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def _coerce_raw_data(raw_event: Any) -> bytes | None:
+    if raw_event is None:
+        return None
+    if isinstance(raw_event, (bytes, bytearray, memoryview)):
+        return bytes(raw_event)
+    if isinstance(raw_event, str):
+        return raw_event.encode("utf-8")
+    try:
+        return json.dumps(raw_event, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return str(raw_event).encode("utf-8")
+
+
 def _normalise_raw_event(raw_event: Any) -> Any:
     if raw_event is None:
         return None
@@ -200,11 +226,13 @@ def _build_record(
     if not isinstance(received_at, str) or not received_at:
         received_at = _iso_now()
     normalised_raw = _normalise_raw_event(raw_event)
+    raw_bytes = _coerce_raw_data(raw_event)
     return _SinkRecord(
         event_id=event.event_id,
         league=league,
         provider=provider,
         raw_event=normalised_raw,
+        raw_data=raw_bytes,
         selection_update=selection_update,
         received_at=received_at,
     )
@@ -379,6 +407,7 @@ class RdsSelectionSink(BaseSink):
             Column("provider", String, nullable=False),
             Column("league", String, nullable=False),
             Column("event_id", String, nullable=False),
+            Column("raw_data", LargeBinary, nullable=True),
             Column("data", json_type_cls(), nullable=False),
             # pylint: disable=not-callable
             Column("created_at", DateTime(timezone=True), server_default=self._func.now(), nullable=False),
@@ -406,6 +435,7 @@ class RdsSelectionSink(BaseSink):
                 Column("provider", String, nullable=False),
                 Column("league", String, nullable=False),
                 Column("event_id", String, nullable=False),
+                Column("raw_data", LargeBinary, nullable=True),
                 Column("data", json_type_cls(), nullable=False),
                 # pylint: disable=not-callable
                 Column("created_at", DateTime(timezone=True), server_default=self._func.now(), nullable=False),
@@ -499,6 +529,7 @@ class RdsSelectionSink(BaseSink):
                     provider=record.provider,
                     league=record.league,
                     event_id=record.event_id,
+                    raw_data=record.raw_data,
                     data={
                         "raw_event": record.raw_event,
                         "selection_update": record.selection_update,
