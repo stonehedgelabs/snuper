@@ -21,6 +21,8 @@ class Event:
         away: tuple[str, str],
         home: tuple[str, str],
         selections: list[Any] | None,
+        sportdata_event_id: int | None = None,
+        rollinginsights_event_id: int | None = None,
     ) -> None:
         """Store identifying metadata and cached selections for an event."""
 
@@ -31,6 +33,8 @@ class Event:
         self.away = away
         self.home = home
         self.selections = selections
+        self.sportdata_event_id = sportdata_event_id
+        self.rollinginsights_event_id = rollinginsights_event_id
         self.log = logging.getLogger(self.__class__.__name__)
 
     def get_key(self) -> str:
@@ -85,6 +89,8 @@ class Event:
 
         return {
             "event_id": self.event_id,
+            "sportdata_event_id": self.sportdata_event_id,
+            "rollinginsights_event_id": self.rollinginsights_event_id,
             "league": self.league,
             "event_url": self.url,
             "start_time": self.start_time.isoformat(),

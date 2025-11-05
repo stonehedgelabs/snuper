@@ -308,7 +308,7 @@ class BovadaEventScraper(BaseEventScraper):
                     )
                     continue
 
-        self.log.info("%s - Retrieved %d Bovada events for today", self.__class__.__name__, len(results))
+        self.log.info("%s - retrieved %d %s events for today", self.__class__.__name__, len(results), context.league)
         return results
 
 
