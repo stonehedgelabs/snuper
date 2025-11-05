@@ -14,7 +14,6 @@ import websockets
 
 from snuper.sinks import SelectionSink
 from snuper.constants import (
-    CYAN,
     YELLOW,
     SUPPORTED_LEAGUES,
     MGM_NBA_TEAMS,
@@ -25,6 +24,7 @@ from snuper.constants import (
     BOVADA_EVENT_LOG_INTERVAL,
     BOVADA_HEARTBEAT_SECONDS,
     BOVADA_MAX_TIME_SINCE_LAST_EVENT,
+    Provider,
 )
 from snuper.runner import BaseMonitor, BaseRunner
 from snuper.scraper import BaseEventScraper, ScrapeContext
@@ -589,7 +589,7 @@ class BovadaMonitor(BaseMonitor):
             input_dir,
             BovadaRunner(),
             concurrency=concurrency,
-            log_color=CYAN,
+            log_color=YELLOW,
             leagues=leagues,
             sink=sink,
             provider=provider,
@@ -613,7 +613,7 @@ async def run_scrape(
         leagues=leagues,
         overwrite=overwrite,
         sink=sink,
-        provider="bovada",
+        provider=Provider.Bovada.value,
     )
 
 

@@ -31,6 +31,7 @@ from snuper.constants import (
     MGM_PAGE_LOAD_TIME,
     MAX_RUNNER_ERRORS,
     League,
+    Provider,
 )
 from snuper.runner import BaseMonitor, BaseRunner
 from snuper.scraper import BaseEventScraper, ScrapeContext
@@ -673,7 +674,7 @@ async def run_scrape(
         leagues=leagues,
         overwrite=overwrite,
         sink=sink,
-        provider="betmgm",
+        provider=Provider.BetMGM.value,
     )
 
 

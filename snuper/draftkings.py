@@ -32,6 +32,7 @@ from snuper.constants import (
     DRAFTKINGS_SPREAD_MARKET_TYPE,
     DRAFTKINGS_WEBSOCKET_URL,
     SUPPORTED_LEAGUES,
+    Provider,
 )
 from snuper.runner import BaseMonitor, BaseRunner
 from snuper.scraper import BaseEventScraper, ScrapeContext
@@ -750,7 +751,7 @@ async def run_scrape(
         leagues=leagues,
         overwrite=overwrite,
         sink=sink,
-        provider="draftkings",
+        provider=Provider.DraftKings.value,
     )
 
 

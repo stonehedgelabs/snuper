@@ -15,6 +15,7 @@ from snuper.runner import BaseMonitor
 from snuper.scraper import BaseEventScraper, ScrapeContext
 from snuper.t import Event
 from snuper.sinks import SelectionSink
+from snuper.constants import Provider
 
 CYAN = "\033[96m"
 """ANSI escape code for cyan logs."""
@@ -233,7 +234,7 @@ async def run_scrape(
         leagues=leagues,
         overwrite=overwrite,
         sink=sink,
-        provider="fanduel",
+        provider=Provider.FanDuel.value,
     )
 
 

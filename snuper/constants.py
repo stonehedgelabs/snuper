@@ -2,94 +2,89 @@ from __future__ import annotations
 
 import enum
 
-# Shared ANSI palette for structured logging
+# ANSI escape code for cyan log output.
 CYAN = "\033[96m"
-"""ANSI escape code for cyan log output."""
 
+# ANSI escape code for red log output.
 RED = "\033[91m"
-"""ANSI escape code for red log output."""
 
+# ANSI escape code for yellow log output.
 YELLOW = "\033[93m"
-"""ANSI escape code for yellow log output."""
 
+# ANSI escape code that resets color formatting.
 RESET = "\033[0m"
-"""ANSI escape code that resets color formatting."""
 
-# Persistence helpers
+# Default format for timestamped artifact filenames.
 DATE_STAMP_FORMAT = "%Y%m%d"
-"""Default format for timestamped artifact filenames."""
 
-# Supported leagues
+# Canonical list of leagues supported across scrapers.
 SUPPORTED_LEAGUES = ["nba", "nfl", "mlb"]
-"""Canonical list of leagues supported across scrapers."""
 
-# Game lifecycle defaults (seconds) - this is an upper bound on game time.
+# Default event duration used to determine when games expire (seconds).
 GAME_RUNTIME_SECONDS = 3.5 * 3600
-"""Default event duration used to determine when games expire."""
 
-# DraftKings configuration
+# Primary DraftKings websocket endpoint for odds streaming.
 DRAFTKINGS_WEBSOCKET_URL = "wss://sportsbook-ws-us-nj.draftkings.com/websocket?format=msgpack&locale=en"
-"""Primary DraftKings websocket endpoint for odds streaming."""
 
+# Frequency for heartbeat logging of Bovada websocket events.
 BOVADA_EVENT_LOG_INTERVAL = 200
-"""Frequency for heartbeat logging of Bovada websocket events."""
 
+# Seconds between forced heartbeat logs for Bovada events.
 BOVADA_HEARTBEAT_SECONDS = 60
-"""Seconds between forced heartbeat logs for Bovada events."""
 
+# Number of idle seconds tolerated before assuming a Bovada game ended.
 BOVADA_MAX_TIME_SINCE_LAST_EVENT = 60 * 30
-"""Number of idle seconds tolerated before assuming a Bovada game ended."""
 
+# DraftKings market type identifier used when filtering spreads.
 DRAFTKINGS_SPREAD_MARKET_TYPE = "Spread"
-"""DraftKings market type identifier used when filtering spreads."""
 
+# Seconds between monitor sweeps when driving the CLI loop.
 DRAFTKINGS_DEFAULT_MONITOR_INTERVAL = 30
-"""Seconds between monitor sweeps when driving the CLI loop."""
 
+# Number of idle seconds tolerated before assuming a game ended.
 DRAFTKINGS_MAX_TIME_SINCE_LAST_EVENT = 60 * 10
-"""Number of idle seconds tolerated before assuming a game ended."""
 
+# Frequency for heartbeat logging of DraftKings websocket events.
 DRAFTKINGS_EVENT_LOG_INTERVAL = 1000
-"""Frequency for heartbeat logging of DraftKings websocket events."""
 
+# Seconds between forced heartbeat logs for DraftKings events.
 DRAFTKINGS_HEARTBEAT_SECONDS = 60
-"""Seconds between forced heartbeat logs for DraftKings events."""
 
+# Landing pages used when scraping DraftKings event metadata.
 DRAFTKINGS_LEAGUE_URLS = {
     "nfl": "https://sportsbook.draftkings.com/leagues/football/nfl",
     "mlb": "https://sportsbook.draftkings.com/leagues/baseball/mlb",
     "nba": "https://sportsbook.draftkings.com/leagues/basketball/nba",
 }
-"""Landing pages used when scraping DraftKings event metadata."""
 
-# MGM configuration
+# Seconds between successive MGM page reloads while polling.
 MGM_DEFAULT_MONITOR_INTERVAL = 1
-"""Seconds between successive MGM page reloads while polling."""
 
+# Milliseconds to wait for page load time in Playwright.
 MGM_PAGE_LOAD_TIME = 5_000
-"""Milliseconds to wait for page load time in Playwright"""
 
+# Seconds between BetMGM monitor sweeps of stored event snapshots.
 MGM_MONITOR_SWEEP_INTERVAL = 30
-"""Seconds between BetMGM monitor sweeps of stored event snapshots."""
 
+# Number of captured snapshots between MGM heartbeat logs.
 MGM_EVENT_LOG_INTERVAL = 10
-"""Number of captured snapshots between MGM heartbeat logs."""
 
+# Maximum idle time before polling terminates a session.
 MAX_IDLE_SECONDS = 300
-"""Maximum idle time before polling terminates a session."""
 
+# Seconds between forced heartbeat logs for MGM events.
 MGM_HEARTBEAT_SECONDS = 60
-"""Seconds between forced heartbeat logs for MGM events."""
 
+# Maximum consecutive runner errors tolerated before stopping.
 MAX_RUNNER_ERRORS = 5
-"""Maximum consecutive runner errors tolerated before stopping."""
 
+# League index pages used to collect MGM event slugs.
 MGM_LEAGUE_URLS = {
     "nfl": "https://www.co.betmgm.com/en/sports/football-11/today",
     "mlb": "https://www.co.betmgm.com/en/sports/baseball-23/today",
     "nba": "https://www.co.betmgm.com/en/sports/basketball-7/today",
 }
-"""League index pages used to collect MGM event slugs."""
+# Lowercase MGM team slugs that flag NBA events during filtering.
 MGM_NBA_TEAMS = {
     "atlanta-hawks",
     "boston-celtics",
@@ -122,8 +117,8 @@ MGM_NBA_TEAMS = {
     "utah-jazz",
     "washington-wizards",
 }
-# Lowercase MGM team slugs that flag NBA events during filtering.
 
+# Lowercase MGM team slugs that flag NFL events during filtering.
 MGM_NFL_TEAMS = {
     "arizona-cardinals",
     "atlanta-falcons",
@@ -158,8 +153,8 @@ MGM_NFL_TEAMS = {
     "tennessee-titans",
     "washington-commanders",
 }
-# Lowercase MGM team slugs that flag NFL events during filtering.
 
+# Lowercase MGM team slugs that flag MLB events during filtering.
 MGM_MLB_TEAMS = {
     "arizona-diamondbacks",
     "atlanta-braves",
@@ -192,7 +187,6 @@ MGM_MLB_TEAMS = {
     "toronto-blue-jays",
     "washington-nationals",
 }
-# Lowercase MGM team slugs that flag MLB events during filtering.
 
 
 class League(enum.Enum):
@@ -212,9 +206,9 @@ class Provider(enum.Enum):
     Bovada = "bovada"
 
 
+# Mapping from league codes to their parent sports.
 SPORTS = {
     "nba": "basketball",
     "mlb": "baseball",
     "nfl": "football",
 }
-# Mapping from league codes to their parent sports.

@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import pathlib
+import datetime as dt
 import logging
+import pathlib
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
 from dotenv import load_dotenv
+from tzlocal import get_localzone
 
 from snuper import betmgm, bovada, draftkings, fanduel
-from snuper.sinks import SinkType, build_sink
+from snuper.sinks import SelectionSink, SinkType, build_sink
 from snuper.constants import Provider, SUPPORTED_LEAGUES
 
 load_dotenv()
@@ -30,24 +32,24 @@ class ScrapeRunner(Protocol):
 
 
 PROVIDER_ALIASES: dict[str, str] = {
-    "draftkings": "draftkings",
-    "betmgm": "betmgm",
-    "fanduel": "fanduel",
-    "bovada": "bovada",
+    Provider.DraftKings.value: Provider.DraftKings.value,
+    Provider.BetMGM.value: Provider.BetMGM.value,
+    Provider.FanDuel.value: Provider.FanDuel.value,
+    Provider.Bovada.value: Provider.Bovada.value,
 }
 
 PROVIDER_SCRAPE: dict[str, ScrapeRunner] = {
-    "draftkings": draftkings.run_scrape,
-    "betmgm": betmgm.run_scrape,
-    "fanduel": fanduel.run_scrape,
-    "bovada": bovada.run_scrape,
+    Provider.DraftKings.value: draftkings.run_scrape,
+    Provider.BetMGM.value: betmgm.run_scrape,
+    Provider.FanDuel.value: fanduel.run_scrape,
+    Provider.Bovada.value: bovada.run_scrape,
 }
 
 PROVIDER_MONITOR: dict[str, Callable[..., Awaitable[None]]] = {
-    "draftkings": draftkings.run_monitor,
-    "betmgm": betmgm.run_monitor,
-    "fanduel": fanduel.run_monitor,
-    "bovada": bovada.run_monitor,
+    Provider.DraftKings.value: draftkings.run_monitor,
+    Provider.BetMGM.value: betmgm.run_monitor,
+    Provider.FanDuel.value: fanduel.run_monitor,
+    Provider.Bovada.value: bovada.run_monitor,
 }
 
 
@@ -96,6 +98,166 @@ def league_argument(value: str) -> list[str]:
     return leagues
 
 
+# Local default daily scrape time; the scheduler converts this into the
+# machine's timezone at runtime.
+DEFAULT_SCRAPE_TIME = dt.time(hour=8)
+
+
+def _parse_scrape_time(value: str) -> dt.time:
+    text = value.strip().lower()
+    if not text:
+        raise ValueError("Scrape interval must be a non-empty time string")
+
+    suffix = None
+    if text.endswith("am") or text.endswith("pm"):
+        suffix = text[-2:]
+        text = text[:-2].strip()
+
+    if ":" in text:
+        hour_part, minute_part = text.split(":", 1)
+    else:
+        hour_part, minute_part = text, "0"
+
+    if not hour_part.isdigit() or not minute_part.isdigit():
+        raise ValueError("Scrape interval must be formatted like '6am' or '18:30'")
+
+    hour = int(hour_part)
+    minute = int(minute_part)
+
+    if minute < 0 or minute > 59:
+        raise ValueError("Scrape interval minutes must be between 0 and 59")
+
+    if suffix:
+        if hour < 0 or hour > 12:
+            raise ValueError("Scrape interval hour must be between 1 and 12 when using am/pm")
+        if hour == 12:
+            hour = 0 if suffix == "am" else 12
+        elif suffix == "pm":
+            hour += 12
+
+    if hour < 0 or hour > 23:
+        raise ValueError("Scrape interval hour must be between 0 and 23")
+
+    return dt.time(hour=hour, minute=minute)
+
+
+def scrape_interval_argument(value: str) -> dt.time:
+    try:
+        return _parse_scrape_time(value)
+    except ValueError as exc:  # pragma: no cover - defensive guard
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _next_scrape_run(target_time: dt.time, *, now: dt.datetime) -> dt.datetime:
+    candidate = now.replace(
+        hour=target_time.hour,
+        minute=target_time.minute,
+        second=target_time.second,
+        microsecond=0,
+    )
+    if candidate <= now:
+        candidate += dt.timedelta(days=1)
+    return candidate
+
+
+async def _run_scrape_task(
+    *,
+    providers: Sequence[str],
+    leagues: Sequence[str] | None,
+    fs_sink_dir: pathlib.Path,
+    overwrite: bool,
+    sink: SelectionSink,
+) -> None:
+    for provider in providers:
+        if provider == Provider.FanDuel.value:
+            logger.info("Skipping unsupported provider %s", provider)
+            continue
+        runner = PROVIDER_SCRAPE[provider]
+        provider_dir = fs_sink_dir / provider
+        await runner(
+            provider_dir,
+            leagues=leagues,
+            overwrite=overwrite,
+            sink=sink,
+        )
+
+
+async def _run_monitor_task(
+    *,
+    providers: Sequence[str],
+    leagues: Sequence[str] | None,
+    fs_sink_dir: pathlib.Path,
+    sink: SelectionSink,
+    monitor_interval: int | None,
+) -> None:
+    monitor_tasks: list[Awaitable[None]] = []
+    for provider in providers:
+        runner = PROVIDER_MONITOR[provider]
+        events_dir = fs_sink_dir / provider
+        if provider == Provider.DraftKings.value:
+            interval = monitor_interval or draftkings.DRAFTKINGS_DEFAULT_MONITOR_INTERVAL
+            monitor_tasks.append(
+                runner(
+                    events_dir,
+                    interval=interval,
+                    leagues=leagues,
+                    sink=sink,
+                    provider=provider,
+                    output_dir=events_dir,
+                )
+            )
+        elif provider == Provider.FanDuel.value:
+            logger.info("Skipping unsupported provider %s", provider)
+        else:
+            monitor_tasks.append(
+                runner(
+                    events_dir,
+                    leagues=leagues,
+                    sink=sink,
+                    provider=provider,
+                    output_dir=events_dir,
+                )
+            )
+
+    if monitor_tasks:
+        await asyncio.gather(*monitor_tasks)
+
+
+async def _run_scrape_scheduler(
+    *,
+    providers: Sequence[str],
+    leagues: Sequence[str] | None,
+    fs_sink_dir: pathlib.Path,
+    overwrite: bool,
+    sink: SelectionSink,
+    scrape_at: dt.time,
+) -> None:
+    local_tz = get_localzone()
+    while True:
+        now = dt.datetime.now(local_tz)
+        next_run = _next_scrape_run(scrape_at, now=now)
+        wait_seconds = max((next_run - now).total_seconds(), 0.0)
+        if next_run.date() == now.date():
+            logger.info("Will run scrape at %s", next_run.isoformat())
+        else:
+            logger.info("Next scrape run is at %s", next_run.isoformat())
+        try:
+            await asyncio.sleep(wait_seconds)
+        except asyncio.CancelledError:
+            logger.info("Scrape scheduler cancelled; exiting")
+            raise
+        try:
+            await _run_scrape_task(
+                providers=providers,
+                leagues=leagues,
+                fs_sink_dir=fs_sink_dir,
+                overwrite=overwrite,
+                sink=sink,
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Scheduled scrape failed: %s", exc)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Unified Event Monitor CLI")
     parser.add_argument(
@@ -108,7 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-t",
         "-task",
         "--task",
-        choices=["scrape", "monitor"],
+        choices=["scrape", "monitor", "run"],
         required=True,
         help="Operation to perform",
     )
@@ -126,9 +288,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-i",
+        "--monitor-interval",
         "--interval",
+        dest="monitor_interval",
         type=int,
-        help="Refresh interval in seconds (DraftKings monitor only)",
+        help="Refresh interval in seconds for the DraftKings monitor",
+    )
+    parser.add_argument(
+        "--scrape-interval",
+        type=scrape_interval_argument,
+        help="Local time-of-day for scheduled scrapes when using --task run (e.g. 8am, 20:30); defaults to 08:00",
     )
     parser.add_argument(
         "--overwrite",
@@ -180,6 +349,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             parser.error("--cache-ttl must be provided as a positive integer when --sink=cache")
         if args.cache_max_items is None or args.cache_max_items <= 0:
             parser.error("--cache-max-items must be provided as a positive integer when --sink=cache")
+    if args.task != "run" and args.scrape_interval is not None:
+        parser.error("--scrape-interval is only valid when --task run is selected")
 
 
 async def dispatch(args: argparse.Namespace) -> None:
@@ -199,9 +370,9 @@ async def dispatch(args: argparse.Namespace) -> None:
         logger.debug("No --fs-sink-dir supplied; using temporary staging directory %s", fs_sink_dir)
 
     rds_selection_table: str | None = None
-    if sink_type is SinkType.RDS and task == "monitor":
+    if sink_type is SinkType.RDS and task in {"monitor", "run"}:
         if args.rds_table is None:
-            raise ValueError("--rds-table is required when --task monitor uses the rds sink")
+            raise ValueError("--rds-table is required when monitoring uses the rds sink")
         rds_selection_table = f"{args.rds_table}_selection_changes"
 
     sink = build_sink(
@@ -216,53 +387,56 @@ async def dispatch(args: argparse.Namespace) -> None:
     )
 
     if task == "scrape":
-        for provider in providers:
-            if provider == Provider.FanDuel.value:
-                logger.info("Skipping unsupported provider %s", provider)
-                continue
-            runner = PROVIDER_SCRAPE[provider]
-            provider_dir = fs_sink_dir / provider
-            await runner(
-                provider_dir,
-                leagues=leagues,
-                overwrite=args.overwrite,
-                sink=sink,
-            )
+        await _run_scrape_task(
+            providers=providers,
+            leagues=leagues,
+            fs_sink_dir=fs_sink_dir,
+            overwrite=args.overwrite,
+            sink=sink,
+        )
         await sink.close()
         if temp_fs_sink_dir:
             logger.debug("Temporary staging directory %s will remain for this run", temp_fs_sink_dir)
         return
 
-    monitor_tasks: list[Awaitable[None]] = []
-    for provider in providers:
-        runner = PROVIDER_MONITOR[provider]
-        events_dir = fs_sink_dir / provider
-        if provider == Provider.DraftKings.value:
-            interval = args.interval or draftkings.DRAFTKINGS_DEFAULT_MONITOR_INTERVAL
-            monitor_tasks.append(
-                runner(
-                    events_dir,
-                    interval=interval,
-                    leagues=leagues,
-                    sink=sink,
-                    provider=provider,
-                    output_dir=events_dir,
-                )
+    if task == "run":
+        scrape_time = args.scrape_interval or DEFAULT_SCRAPE_TIME
+        scheduler_task = asyncio.create_task(
+            _run_scrape_scheduler(
+                providers=providers,
+                leagues=leagues,
+                fs_sink_dir=fs_sink_dir,
+                overwrite=args.overwrite,
+                sink=sink,
+                scrape_at=scrape_time,
             )
-        elif provider == Provider.FanDuel.value:
-            logger.info("Skipping unsupported provider %s", provider)
-        else:
-            monitor_tasks.append(
-                runner(
-                    events_dir,
-                    leagues=leagues,
-                    sink=sink,
-                    provider=provider,
-                    output_dir=events_dir,
-                )
+        )
+        monitor_task = asyncio.create_task(
+            _run_monitor_task(
+                providers=providers,
+                leagues=leagues,
+                fs_sink_dir=fs_sink_dir,
+                sink=sink,
+                monitor_interval=args.monitor_interval,
             )
+        )
+        tasks = [scheduler_task, monitor_task]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task_obj in tasks:
+                task_obj.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await sink.close()
+        return
 
-    await asyncio.gather(*monitor_tasks)
+    await _run_monitor_task(
+        providers=providers,
+        leagues=leagues,
+        fs_sink_dir=fs_sink_dir,
+        sink=sink,
+        monitor_interval=args.monitor_interval,
+    )
 
 
 def main() -> None:
