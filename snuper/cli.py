@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from tzlocal import get_localzone
 
 from snuper import betmgm, bovada, draftkings, fanduel
+from snuper.config import load_config
 from snuper.sinks import SelectionSink, SinkType, build_sink
 from snuper.constants import Provider, SUPPORTED_LEAGUES
 
@@ -268,11 +269,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-t",
-        "-task",
         "--task",
         choices=["scrape", "monitor", "run"],
         required=True,
         help="Operation to perform",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=pathlib.Path,
+        help="Path to the TOML configuration file",
     )
     parser.add_argument(
         "-l",
@@ -281,15 +287,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated list of leagues to limit (omit for all)",
     )
     parser.add_argument(
-        "-o",
         "--fs-sink-dir",
         type=pathlib.Path,
         help="Base directory for filesystem snapshots and odds logs",
     )
     parser.add_argument(
-        "-i",
         "--monitor-interval",
-        "--interval",
         dest="monitor_interval",
         type=int,
         help="Refresh interval in seconds for the DraftKings monitor",
@@ -336,6 +339,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.config is not None and not args.config.is_file():
+        parser.error("--config must point to an existing configuration file")
     sink_type = SinkType(args.sink)
     if sink_type is SinkType.FS and args.fs_sink_dir is None:
         parser.error("--fs-sink-dir is required when --sink=fs")
@@ -354,6 +359,11 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 async def dispatch(args: argparse.Namespace) -> None:
+    # Load config if provided
+    if args.config is not None:
+        load_config(args.config)
+        logger.info("Loaded configuration from %s", args.config)
+
     if args.provider:
         providers = list(args.provider)
     else:

@@ -2,6 +2,8 @@ import datetime as dt
 import json
 import logging
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import rapidfuzz
@@ -21,8 +23,8 @@ class Event:
         away: tuple[str, str],
         home: tuple[str, str],
         selections: list[Any] | None,
-        sportdata_event_id: int | None = None,
-        rollinginsights_event_id: int | None = None,
+        sportdata_game: dict | None = None,
+        rollinginsight_game: dict | None = None,
     ) -> None:
         """Store identifying metadata and cached selections for an event."""
 
@@ -33,8 +35,8 @@ class Event:
         self.away = away
         self.home = home
         self.selections = selections
-        self.sportdata_event_id = sportdata_event_id
-        self.rollinginsights_event_id = rollinginsights_event_id
+        self.sportdata_game = sportdata_game
+        self.rollinginsight_game = rollinginsight_game
         self.log = logging.getLogger(self.__class__.__name__)
 
     def get_key(self) -> str:
@@ -89,8 +91,8 @@ class Event:
 
         return {
             "event_id": self.event_id,
-            "sportdata_event_id": self.sportdata_event_id,
-            "rollinginsights_event_id": self.rollinginsights_event_id,
+            "sportdata_game": self.sportdata_game,
+            "rollinginsight_game": self.rollinginsight_game,
             "league": self.league,
             "event_url": self.url,
             "start_time": self.start_time.isoformat(),
@@ -99,6 +101,11 @@ class Event:
             "away": self.away,
             "home": self.home,
         }
+
+    def set_rollinginsight_game(self, game: dict[str, Any]) -> None:
+        """Set the rollinginsight_game data for this event."""
+
+        self.rollinginsight_game = game
 
     def __repr__(self) -> str:
         """Return a concise display string useful in logs."""
@@ -173,3 +180,145 @@ class Team:
 
     def __repr__(self):
         return f"<Team {self.name} ({self.abbreviation or ''})>"
+
+
+@dataclass(slots=True)
+class SportdataGame:
+    """Represent a game from Sportdata API."""
+
+    game_id: int
+    global_game_id: int
+    score_id: int
+    game_key: str
+    season: int
+    season_type: int
+    status: str
+    canceled: bool
+    date: str
+    day: str
+    date_time: str
+    date_time_utc: str
+    away_team: str
+    home_team: str
+    global_away_team_id: int
+    global_home_team_id: int
+    away_team_id: int
+    home_team_id: int
+    stadium_id: int
+    closed: bool | None = None
+    last_updated: str | None = None
+    is_closed: bool | None = None
+    week: int | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "SportdataGame":
+        week_value = data.get("Week")
+        return cls(
+            game_id=int(data["GameID"]),
+            global_game_id=int(data["GlobalGameID"]),
+            score_id=int(data["ScoreID"]),
+            game_key=str(data["GameKey"]),
+            season=int(data["Season"]),
+            season_type=int(data["SeasonType"]),
+            status=str(data["Status"]),
+            canceled=bool(data["Canceled"]),
+            date=str(data["Date"]),
+            day=str(data["Day"]),
+            date_time=str(data["DateTime"]),
+            date_time_utc=str(data["DateTimeUTC"]),
+            away_team=str(data["AwayTeam"]),
+            home_team=str(data["HomeTeam"]),
+            global_away_team_id=int(data["GlobalAwayTeamID"]),
+            global_home_team_id=int(data["GlobalHomeTeamID"]),
+            away_team_id=int(data["AwayTeamID"]),
+            home_team_id=int(data["HomeTeamID"]),
+            stadium_id=int(data["StadiumID"]),
+            closed=data.get("Closed"),
+            last_updated=data.get("LastUpdated"),
+            is_closed=data.get("IsClosed"),
+            week=int(week_value) if week_value is not None else None,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "GameID": self.game_id,
+            "GlobalGameID": self.global_game_id,
+            "ScoreID": self.score_id,
+            "GameKey": self.game_key,
+            "Season": self.season,
+            "SeasonType": self.season_type,
+            "Status": self.status,
+            "Canceled": self.canceled,
+            "Date": self.date,
+            "Day": self.day,
+            "DateTime": self.date_time,
+            "DateTimeUTC": self.date_time_utc,
+            "AwayTeam": self.away_team,
+            "HomeTeam": self.home_team,
+            "GlobalAwayTeamID": self.global_away_team_id,
+            "GlobalHomeTeamID": self.global_home_team_id,
+            "AwayTeamID": self.away_team_id,
+            "HomeTeamID": self.home_team_id,
+            "StadiumID": self.stadium_id,
+            "Closed": self.closed,
+            "LastUpdated": self.last_updated,
+            "IsClosed": self.is_closed,
+            "Week": self.week,
+        }
+
+
+class RollingInsightsGame:
+    """Represent a game from Rolling Insights API."""
+
+    def __init__(
+        self,
+        away_team: str,
+        home_team: str,
+        away_team_id: int,
+        home_team_id: int,
+        game_id: str,
+        game_time: str,
+        season_type: str,
+        season: str,
+        status: str,
+        event_name: str | None = None,
+        round_number: str | None = None,
+        broadcast: str | None = None,
+    ) -> None:
+        """Store game data from Rolling Insights API."""
+
+        self.away_team = away_team
+        self.home_team = home_team
+        self.away_team_id = away_team_id
+        self.home_team_id = home_team_id
+        self.game_id = game_id
+        self.game_time = game_time
+        self.season_type = season_type
+        self.season = season
+        self.status = status
+        self.event_name = event_name
+        self.round = round_number
+        self.broadcast = broadcast
+
+
+class RollingInsightsScheduleResponse:
+    """Represent the response from Rolling Insights schedule API."""
+
+    def __init__(self, data: dict[str, list[dict[str, Any]]]) -> None:
+        """Store the schedule response data."""
+
+        self.data = data
+
+    def get_games_for_league(self, league: str) -> list[dict[str, Any]]:
+        """Return the list of games for a specific league."""
+
+        return self.data.get(league.upper(), [])
+
+
+class SportdataScheduleResponse:
+    """Represent the response from Sportdata schedule API."""
+
+    def __init__(self, games: list[dict[str, Any]]) -> None:
+        """Store the schedule response data."""
+
+        self.games = games
