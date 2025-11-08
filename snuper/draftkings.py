@@ -464,7 +464,7 @@ class DraftkingsEventScraper(BaseEventScraper):
             await asyncio.sleep(0.5)
 
         events.sort(key=lambda g: g.start_time)
-        self.log.info("%s - saved %d total %s events for today.", self.__class__.__name__, len(events), league)
+        self.log.info("%s - scraped %d total %s events for today.", self.__class__.__name__, len(events), league)
         return events
 
 
@@ -742,6 +742,8 @@ async def run_scrape(
     leagues: Sequence[str] | None = None,
     overwrite: bool = False,
     sink: SelectionSink | None = None,
+    merge_sportdata_games: bool = False,
+    merge_rollinginsights_games: bool = False,
 ) -> None:
     """Invoke the DraftKings scraper with the provided destination."""
 
@@ -752,6 +754,8 @@ async def run_scrape(
         overwrite=overwrite,
         sink=sink,
         provider=Provider.DraftKings.value,
+        merge_sportdata_games=merge_sportdata_games,
+        merge_rollinginsights_games=merge_rollinginsights_games,
     )
 
 

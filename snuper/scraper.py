@@ -12,7 +12,7 @@ from typing import Any
 from tzlocal import get_localzone
 
 from snuper.constants import SPORTS
-from snuper.utils import current_stamp, event_filepath
+from snuper.utils import current_stamp, event_filepath, match_sportdata_game, match_rollinginsight_game
 from snuper.t import Event
 from snuper.sinks import SelectionSink
 
@@ -31,6 +31,8 @@ class ScrapeContext:
     run_at: dt.datetime = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc))
     cache: dict[str, Any] = field(default_factory=dict)
     overwrite: bool = False
+    merge_sportdata_games: bool = False
+    merge_rollinginsights_games: bool = False
 
 
 class BaseEventScraper(abc.ABC):
@@ -108,6 +110,8 @@ class BaseEventScraper(abc.ABC):
         overwrite: bool = False,
         sink: SelectionSink | None = None,
         provider: str | None = None,
+        merge_sportdata_games: bool = False,
+        merge_rollinginsights_games: bool = False,
     ) -> list[Path]:
         """Scrape each configured league and persist the resulting snapshots."""
 
@@ -126,7 +130,15 @@ class BaseEventScraper(abc.ABC):
                 continue
             seen.add(league)
             sport = SPORTS[league]
-            context = ScrapeContext(league, sport, destination, source_root, overwrite=overwrite)
+            context = ScrapeContext(
+                league,
+                sport,
+                destination,
+                source_root,
+                overwrite=overwrite,
+                merge_sportdata_games=merge_sportdata_games,
+                merge_rollinginsights_games=merge_rollinginsights_games,
+            )
             path = event_filepath(destination, league, timestamp=context.stamp)
             if path.exists() and not overwrite:
                 self.log.warning("%s - file %s already exists. skipping.", self.__class__.__name__, path)
@@ -138,6 +150,55 @@ class BaseEventScraper(abc.ABC):
             except Exception as exc:  # pragma: no cover - safety net for CLI usage
                 self.log.error("%s - failed to scrape %s: %s", self.__class__.__name__, league, exc)
                 continue
+
+            # Match and merge games if requested
+            if merge_sportdata_games:
+                self.log.info(
+                    "%s - matching Sportdata games for %d events in %s", self.__class__.__name__, len(events), league
+                )
+                matched_count = 0
+                for event in events:
+                    try:
+                        await match_sportdata_game(event)
+                        matched_count += 1
+                    except Exception as exc:
+                        self.log.warning(
+                            "%s - failed to match Sportdata game for event %s: %s",
+                            self.__class__.__name__,
+                            event.event_id,
+                            exc,
+                        )
+                self.log.info(
+                    "%s - successfully matched %d/%d events to Sportdata games",
+                    self.__class__.__name__,
+                    matched_count,
+                    len(events),
+                )
+            if merge_rollinginsights_games:
+                self.log.info(
+                    "%s - matching Rolling Insights games for %d events in %s",
+                    self.__class__.__name__,
+                    len(events),
+                    league,
+                )
+                matched_count = 0
+                for event in events:
+                    try:
+                        await match_rollinginsight_game(event)
+                        matched_count += 1
+                    except Exception as exc:
+                        self.log.warning(
+                            "%s - failed to match Rolling Insights game for event %s: %s",
+                            self.__class__.__name__,
+                            event.event_id,
+                            exc,
+                        )
+                self.log.info(
+                    "%s - successfully matched %d/%d events to Rolling Insights games",
+                    self.__class__.__name__,
+                    matched_count,
+                    len(events),
+                )
 
             saved: Path | None = None
             if sink and provider:

@@ -168,6 +168,8 @@ async def _run_scrape_task(
     fs_sink_dir: pathlib.Path,
     overwrite: bool,
     sink: SelectionSink,
+    merge_sportdata_games: bool = False,
+    merge_rollinginsights_games: bool = False,
 ) -> None:
     for provider in providers:
         if provider == Provider.FanDuel.value:
@@ -180,6 +182,8 @@ async def _run_scrape_task(
             leagues=leagues,
             overwrite=overwrite,
             sink=sink,
+            merge_sportdata_games=merge_sportdata_games,
+            merge_rollinginsights_games=merge_rollinginsights_games,
         )
 
 
@@ -232,6 +236,8 @@ async def _run_scrape_scheduler(
     overwrite: bool,
     sink: SelectionSink,
     scrape_at: dt.time,
+    merge_sportdata_games: bool = False,
+    merge_rollinginsights_games: bool = False,
 ) -> None:
     local_tz = get_localzone()
     while True:
@@ -254,6 +260,8 @@ async def _run_scrape_scheduler(
                 fs_sink_dir=fs_sink_dir,
                 overwrite=overwrite,
                 sink=sink,
+                merge_sportdata_games=merge_sportdata_games,
+                merge_rollinginsights_games=merge_rollinginsights_games,
             )
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.exception("Scheduled scrape failed: %s", exc)
@@ -335,6 +343,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Maximum list length per event stored in the cache sink",
     )
+    parser.add_argument(
+        "--merge-sportdata-games",
+        action="store_true",
+        help="Match and merge Sportdata games with scraped events before saving (requires --task scrape)",
+    )
+    parser.add_argument(
+        "--merge-rollinginsights-games",
+        action="store_true",
+        help="Match and merge Rolling Insights games with scraped events before saving (requires --task scrape)",
+    )
+    parser.add_argument(
+        "--merge-all-games",
+        action="store_true",
+        help="Match and merge both Sportdata and Rolling Insights games (equivalent to using both --merge-sportdata-games and --merge-rollinginsights-games)",
+    )
     return parser
 
 
@@ -356,6 +379,17 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             parser.error("--cache-max-items must be provided as a positive integer when --sink=cache")
     if args.task != "run" and args.scrape_interval is not None:
         parser.error("--scrape-interval is only valid when --task run is selected")
+    if args.merge_all_games and (args.merge_sportdata_games or args.merge_rollinginsights_games):
+        parser.error("--merge-all-games cannot be used with --merge-sportdata-games or --merge-rollinginsights-games")
+    if (args.merge_sportdata_games or args.merge_rollinginsights_games or args.merge_all_games) and args.task not in {
+        "scrape",
+        "run",
+    }:
+        parser.error(
+            "--merge-sportdata-games, --merge-rollinginsights-games, and --merge-all-games require --task scrape or --task run"
+        )
+    if (args.merge_sportdata_games or args.merge_all_games) and args.config is None:
+        parser.error("--merge-sportdata-games and --merge-all-games require --config to be specified")
 
 
 async def dispatch(args: argparse.Namespace) -> None:
@@ -396,6 +430,9 @@ async def dispatch(args: argparse.Namespace) -> None:
         cache_max_items=args.cache_max_items,
     )
 
+    merge_sportdata_games = args.merge_sportdata_games or args.merge_all_games
+    merge_rollinginsights_games = args.merge_rollinginsights_games or args.merge_all_games
+
     if task == "scrape":
         await _run_scrape_task(
             providers=providers,
@@ -403,6 +440,8 @@ async def dispatch(args: argparse.Namespace) -> None:
             fs_sink_dir=fs_sink_dir,
             overwrite=args.overwrite,
             sink=sink,
+            merge_sportdata_games=merge_sportdata_games,
+            merge_rollinginsights_games=merge_rollinginsights_games,
         )
         await sink.close()
         if temp_fs_sink_dir:
@@ -419,6 +458,8 @@ async def dispatch(args: argparse.Namespace) -> None:
                 overwrite=args.overwrite,
                 sink=sink,
                 scrape_at=scrape_time,
+                merge_sportdata_games=merge_sportdata_games,
+                merge_rollinginsights_games=merge_rollinginsights_games,
             )
         )
         monitor_task = asyncio.create_task(

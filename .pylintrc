@@ -38,6 +38,7 @@ disable=
     R1732,  # consider-using-with (handled safely in Playwright contexts)
     E1205,  # make logging great again
     C0301,  # i like long lines
+    C0209,  # i don't like fstrings
 
 # Enable a few important modern warnings
 enable=

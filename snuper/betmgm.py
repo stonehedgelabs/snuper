@@ -665,6 +665,8 @@ async def run_scrape(
     leagues: Sequence[str] | None = None,
     overwrite: bool = False,
     sink: SelectionSink | None = None,
+    merge_sportdata_games: bool = False,
+    merge_rollinginsights_games: bool = False,
 ) -> None:
     """Invoke the BetMGM scraper with the supplied destination."""
 
@@ -675,6 +677,8 @@ async def run_scrape(
         overwrite=overwrite,
         sink=sink,
         provider=Provider.BetMGM.value,
+        merge_sportdata_games=merge_sportdata_games,
+        merge_rollinginsights_games=merge_rollinginsights_games,
     )
 
 

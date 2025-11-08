@@ -40,7 +40,7 @@ class CacheTTLConfig:
     reddit_thread_comments: int
     odds: int
     live_odds: int
-    live_odd_game_ids: int
+    live_odds_games_ids: int
     user_auth: int
 
     @classmethod
@@ -59,7 +59,7 @@ class CacheTTLConfig:
             reddit_thread_comments=int(data["reddit_thread_comments"]),
             odds=int(data["odds"]),
             live_odds=int(data["live_odds"]),
-            live_odd_game_ids=int(data["live_odd_game_ids"]),
+            live_odds_games_ids=int(data["live_odds_games_ids"]),
             user_auth=int(data["user_auth"]),
         )
 

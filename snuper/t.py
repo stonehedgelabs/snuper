@@ -267,38 +267,40 @@ class SportdataGame:
         }
 
 
+@dataclass(slots=True)
 class RollingInsightsGame:
     """Represent a game from Rolling Insights API."""
 
-    def __init__(
-        self,
-        away_team: str,
-        home_team: str,
-        away_team_id: int,
-        home_team_id: int,
-        game_id: str,
-        game_time: str,
-        season_type: str,
-        season: str,
-        status: str,
-        event_name: str | None = None,
-        round_number: str | None = None,
-        broadcast: str | None = None,
-    ) -> None:
-        """Store game data from Rolling Insights API."""
+    away_team: str
+    home_team: str
+    away_team_id: int
+    home_team_id: int
+    game_id: str
+    game_time: str
+    season_type: str
+    season: str
+    status: str
+    event_name: str | None = None
+    round: str | None = None
+    broadcast: str | None = None
 
-        self.away_team = away_team
-        self.home_team = home_team
-        self.away_team_id = away_team_id
-        self.home_team_id = home_team_id
-        self.game_id = game_id
-        self.game_time = game_time
-        self.season_type = season_type
-        self.season = season
-        self.status = status
-        self.event_name = event_name
-        self.round = round_number
-        self.broadcast = broadcast
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RollingInsightsGame":
+        """Create a RollingInsightsGame from an API response dictionary."""
+        return cls(
+            away_team=str(data["away_team"]),
+            home_team=str(data["home_team"]),
+            away_team_id=int(data["away_team_id"]),
+            home_team_id=int(data["home_team_id"]),
+            game_id=str(data["game_ID"]),
+            game_time=str(data["game_time"]),
+            season_type=str(data["season_type"]),
+            season=str(data["season"]),
+            status=str(data["status"]),
+            event_name=data.get("event_name"),
+            round=data.get("round"),
+            broadcast=data.get("broadcast"),
+        )
 
 
 class RollingInsightsScheduleResponse:
