@@ -151,7 +151,6 @@ class BaseEventScraper(abc.ABC):
                 self.log.error("%s - failed to scrape %s: %s", self.__class__.__name__, league, exc)
                 continue
 
-            # Match and merge games if requested
             if merge_sportdata_games:
                 self.log.info(
                     "%s - matching Sportdata games for %d events in %s", self.__class__.__name__, len(events), league

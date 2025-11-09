@@ -80,7 +80,6 @@ class EventScraper(BaseEventScraper):
         """Split a FanDuel slug into short and long team identifiers."""
         slug = urlparse(event_url).path.split("/")[-1]
         try:
-            # pattern: new-york-jets-@-cincinnati-bengals-34844525
             away_part, home_part, _ = slug.split("-@-")
         except ValueError:
             return None
@@ -108,14 +107,8 @@ class EventScraper(BaseEventScraper):
             raise ValueError(f"Unsupported league: {league}")
 
         self.log.info("%s - detected local timezone: %s", self.__class__.__name__, self.local_tz)
-        # now = dt.datetime.now(self.local_tz)
-        # start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         events: list[Event] = []
         headers = {
-            # ":authority": "sportsbook.fanduel.com",
-            # ":method": "POST",
-            # ":path": "/JMCVuBG8/xhr/api/v2/collector",
-            # ":scheme": "https",
             "accept": "*/*",
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "en-US,en;q=0.7",
@@ -165,7 +158,6 @@ class EventScraper(BaseEventScraper):
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
             await browser.close()
 
-        # Filter for valid relative paths like /football/nfl/new-york-jets-@-cincinnati-bengals-34844525
         event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
         event_urls = [self.base_domain + path for path in event_paths]
 
@@ -174,7 +166,6 @@ class EventScraper(BaseEventScraper):
         for event_url in event_urls:
             try:
                 event_id = event_url.split("-")[-1]
-                # TODO: FanDuel doesn't show start times on list view; may require secondary fetch
                 start_time_utc = dt.datetime.now(dt.timezone.utc)
                 away, home = self.extract_team_info(event_url) or (
                     ("?", "?"),
@@ -210,7 +201,6 @@ class FanDuelMonitor(BaseMonitor):
         leagues: Sequence[str] | None = None,
     ) -> None:
         """Initialise paths and bookkeeping for future polling tasks."""
-        # FanDuel monitor is not yet implemented
         # pylint: disable=super-init-not-called
         raise NotImplementedError("TODO: Implement FanDuel live polling monitor")
 

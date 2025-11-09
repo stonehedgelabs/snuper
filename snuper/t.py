@@ -51,7 +51,6 @@ class Event:
 
     def game_label(self) -> str:
 
-        # League-to-team mapping
         league_team_sets = {
             "mlb": MGM_MLB_TEAMS,
             "nfl": MGM_NFL_TEAMS,
@@ -67,13 +66,10 @@ class Event:
             """Resolve the most likely canonical team name using fuzzy matching."""
             slug = "-".join(tokens).lower()
 
-            # Find the best fuzzy match within this league’s team set
             match, _score, _ = rapidfuzz.process.extractOne(slug, teams, score_cutoff=70)
 
-            # Fallback if no close match is found
             canonical = match if match else slug
 
-            # Convert canonical slug to readable title form
             return " ".join(word.capitalize() for word in canonical.split("-"))
 
         away_name = resolve_team_name(self.away)

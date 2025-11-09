@@ -393,7 +393,6 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 async def dispatch(args: argparse.Namespace) -> None:
-    # Load config if provided
     if args.config is not None:
         load_config(args.config)
         logger.info("Loaded configuration from %s", args.config)

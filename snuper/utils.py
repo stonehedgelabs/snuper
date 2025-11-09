@@ -198,7 +198,6 @@ def mgm_constant_to_team(constant_name: str, teams: list[Team]) -> Team | None:
     league = match.group(1)
     team_slug = match.group(2).lower().replace("_", "-")
 
-    # Remove prefix 'mgm_<league>_' and convert back to slug form
     for team in teams:
         slug = f"{(team.city or '').lower().replace(' ', '-')}-{team.name.lower().replace(' ', '-')}"
         slug = re.sub(r"[^a-z0-9\-]", "", slug)
@@ -213,7 +212,7 @@ def team_to_mgm_constant(team: Team) -> str | None:
     Given a Team, return its MGM_* constant name (e.g. 'MGM_MLB_LOS_ANGELES_DODGERS').
     """
     team_slug = f"{(team.city or '').lower().replace(' ', '-')}-{team.name.lower().replace(' ', '-')}"
-    team_slug = re.sub(r"[^a-z0-9\-]", "", team_slug)  # sanitize
+    team_slug = re.sub(r"[^a-z0-9\-]", "", team_slug)
     MGM_LEAGUE_MAP = {
         "NFL": "MGM_NFL_TEAMS",
         "NBA": "MGM_NBA_TEAMS",
@@ -226,11 +225,9 @@ def team_to_mgm_constant(team: Team) -> str | None:
     if not mgm_set_name:
         return None
 
-    # get the actual set object dynamically
     mgm_set = globals().get(mgm_set_name, set())
 
     if team_slug in mgm_set:
-        # format to MGM_<LEAGUE>_<CITY>_<TEAM> in uppercase, underscores instead of hyphens
         return f"MGM_{team.league}_{team_slug.replace('-', '_').upper()}"
     return None
 
@@ -278,10 +275,8 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
     if league.lower() != "nba":
         return None
 
-    # Convert event tokens to a normalized string
     event_team_str = " ".join(event_team_tokens).lower()
 
-    # Find best match among NBA team names
     best_abbrev = None
     best_score = 0
 
@@ -302,10 +297,8 @@ def _match_sportdata_team_abbreviation(event_team_tokens: tuple[str, ...], api_a
     Match event team tokens to Sportdata team abbreviation.
     Returns True if the abbreviation matches.
     """
-    # Get the expected abbreviation from event tokens
     expected_abbrev = _get_team_abbreviation_from_tokens(event_team_tokens, league)
 
-    # Match against API abbreviation
     return expected_abbrev is not None and expected_abbrev.upper() == api_abbreviation.upper()
 
 
@@ -338,18 +331,14 @@ def _extract_mascot_from_team_name(team_name: str) -> str:
     if not words:
         return ""
 
-    # For multi-word mascots (e.g., "Trail Blazers"), return last 2 words
-    # This is a heuristic: if the last word is short (<=2 chars), it's likely part of a multi-word mascot
     if len(words) >= 2 and len(words[-1]) <= 2:  # pylint: disable=chained-comparison
         return " ".join(words[-2:])
 
-    # Common multi-word mascots
-    two_word_mascots = {"trail blazers", "thunder hawks", "timberwolves"}  # Add more as needed
+    two_word_mascots = {"trail blazers", "thunder hawks", "timberwolves"}
     last_two = " ".join(words[-2:]) if len(words) >= 2 else ""
     if last_two in two_word_mascots:
         return last_two
 
-    # Default: return last word
     return words[-1]
 
 
@@ -362,42 +351,31 @@ def _fuzzy_match_team_name(event_team_tokens: tuple[str, ...], api_team_name: st
     then falls back to mascot-only matching for cases with multi-word mascots.
     """
 
-    # Normalize: lowercase, replace hyphens with spaces, normalize whitespace
     def normalize(s: str) -> str:
         return re.sub(r"\s+", " ", s.lower().replace("-", " ").strip())
 
-    # Normalize API team name
     api_team_normalized = normalize(api_team_name)
 
-    # Try matching full event team tokens against full API team name
     event_team_str = normalize(" ".join(event_team_tokens))
 
-    # Use token_sort_ratio which is more forgiving of word order and spacing
     full_score = rapidfuzz.fuzz.token_sort_ratio(event_team_str, api_team_normalized)
 
     if full_score >= 60:
         return True
 
-    # Also try regular ratio as fallback
     full_score_ratio = rapidfuzz.fuzz.ratio(event_team_str, api_team_normalized)
     if full_score_ratio >= 60:
         return True
 
-    # Fall back to mascot-only matching for multi-word mascots
-    # Extract mascot from API team name
     api_mascot = _extract_mascot_from_team_name(api_team_name)
     api_mascot_normalized = normalize(api_mascot)
 
-    # Try matching with different numbers of trailing words from event tokens
-    # Start with just the last word, then try last 2 words, last 3 words
     max_words = min(3, len(event_team_tokens))
 
     for n in range(1, max_words + 1):
-        # Get last N words from event tokens
         event_mascot_words = event_team_tokens[-n:]
         event_mascot = normalize(" ".join(event_mascot_words))
 
-        # Compare mascots
         score = rapidfuzz.fuzz.ratio(event_mascot, api_mascot_normalized)
 
         if score >= 60:
@@ -415,13 +393,11 @@ async def match_rollinginsight_game(event: Event) -> None:
 
     rsc_token = os.environ["ROLLING_INSIGHTS_CLIENT_SECRET"]
 
-    # Get today's date in local timezone for querying the API
     local_tz = get_localzone()
     logger.info("RollingInsights matcher using local timezone: %s", local_tz)
     today_local = dt.datetime.now(local_tz).date()
     current_date = today_local.strftime("%Y-%m-%d")
 
-    # Convert event start_time to local timezone to get the event date for filtering
     event_start_local = event.start_time.astimezone(local_tz)
     event_date = event_start_local.strftime("%Y-%m-%d")
 
@@ -462,29 +438,20 @@ async def match_rollinginsight_game(event: Event) -> None:
             event.home,
         )
 
-    # Filter games by date and fuzzy match teams
     matches = []
     for game in league_data:
         home_team = game["home_team"]
         away_team = game["away_team"]
-        # Extract date from game_time (format: "Sun, 09 Nov 2025 01:00:00 GMT")
-        # Parse the game_time and convert to local timezone for date comparison
         try:
             game_time_str = game["game_time"]
             if game_time_str:
-                # Parse GMT time and convert to local timezone
                 game_dt_gmt = dt.datetime.strptime(game_time_str, "%a, %d %b %Y %H:%M:%S %Z")
-                # Convert GMT to UTC (GMT is UTC+0)
                 game_dt_utc = game_dt_gmt.replace(tzinfo=dt.timezone.utc)
-                # Convert to local timezone for date comparison
                 game_dt_local = game_dt_utc.astimezone(local_tz)
                 game_date = game_dt_local.strftime("%Y-%m-%d")
             else:
-                # Fallback: try to extract date from game_ID if available
                 game_id = game["game_ID"]
                 if game_id and len(game_id) >= 8:
-                    # game_ID format: "20251108-12-5", first 8 chars are date (YYYYMMDD)
-                    # This appears to be in local date format already
                     game_date = f"{game_id[:4]}-{game_id[4:6]}-{game_id[6:8]}"
                 else:
                     continue
@@ -505,7 +472,6 @@ async def match_rollinginsight_game(event: Event) -> None:
             )
             continue
 
-        # Check if date matches
         if game_date != event_date:
             continue
 
@@ -515,7 +481,6 @@ async def match_rollinginsight_game(event: Event) -> None:
         if home_matches and away_matches:
             matches.append(game)
 
-    # Validate we have exactly one match
     if len(matches) == 0:
         logger.warning(
             "No matching RollingInsights %s game found for event %s (%s @ %s) on %s -- %s",
@@ -544,7 +509,6 @@ async def match_rollinginsight_game(event: Event) -> None:
             % (event.league, len(matches), event.event_id, event.away, event.home, event_date)
         )
 
-    # Set the matched game
     event.set_rollinginsight_game(matches[0])
 
 
@@ -555,19 +519,16 @@ async def match_sportdata_game(event: Event) -> None:
     Raises an error if zero or multiple matches are found.
     """
 
-    # Get API key from environment
     api_key = os.environ.get("SPORTSDATAIO_API_KEY")
     if not api_key:
         raise ValueError("SPORTSDATAIO_API_KEY environment variable is not set")
 
-    # Get config to access season information
     try:
         config = get_config()
     except RuntimeError:
         logger.error("Configuration not loaded. Please provide --config argument.")
         raise ValueError("Configuration must be loaded to match Sportdata games") from None
 
-    # Get season from config based on event league
     try:
         season_info = config.seasons.get_season(event.league)
         season = season_info.regular
@@ -575,15 +536,12 @@ async def match_sportdata_game(event: Event) -> None:
         logger.error("No season configuration found for league %s (event %s)", event.league, event.event_id)
         raise ValueError("No season configuration found for league %s" % event.league) from e
 
-    # Get event date in YYYY-MM-DD format for filtering
     event_date = event.start_time.strftime("%Y-%m-%d")
 
-    # Build the API URL
     base_url = config.api.sportsdata_base_url
     league_lower = event.league.lower()
     url = f"{base_url}/{league_lower}/scores/json/SchedulesBasic/{season}?key={api_key}"
 
-    # Fetch the schedule
     async with httpx.AsyncClient(timeout=config.api.request_timeout) as client:
         try:
             response = await client.get(url)
@@ -609,7 +567,6 @@ async def match_sportdata_game(event: Event) -> None:
             event.event_id,
         )
 
-    # Filter games by date and status, then match teams
     matches = []
     scheduled_games_count = sum(1 for g in data if g.get("Status") == "Scheduled")
     logger.info(
@@ -622,16 +579,12 @@ async def match_sportdata_game(event: Event) -> None:
 
     for game in data:
 
-        # Filter by status - we want upcoming/scheduled games, not completed ones
         status = game["Status"]
-        # Accept: Scheduled, Postponed, Delayed, but not Final, Canceled, etc.
         if status in ("Final", "F/OT", "Canceled", "Cancelled", "Suspended"):
             continue
 
-        # Extract date from DateTimeUTC
         try:
             date_time_utc = game["DateTimeUTC"]
-            # Parse the datetime and extract date
             game_dt = dt.datetime.fromisoformat(date_time_utc.replace("Z", "+00:00"))
             if game_dt.tzinfo is None:
                 game_dt = game_dt.replace(tzinfo=dt.timezone.utc)
@@ -658,7 +611,6 @@ async def match_sportdata_game(event: Event) -> None:
         if game_date != event_date:
             continue
 
-        # Some sportdata team short names are different from conventional short names.
         remappings = {"NO": "NOP", "SA": "SAS", "NY": "NYK", "GS": "GSW", "PHO": "PHX"}
 
         home_team_abbrev = game["HomeTeam"]
@@ -673,7 +625,6 @@ async def match_sportdata_game(event: Event) -> None:
         if home_matches and away_matches:
             matches.append(game)
 
-    # Validate we have exactly one match
     if len(matches) == 0:
         logger.warning(
             "No matching Sportdata %s game found for event %s (%s @ %s) on %s",
@@ -702,5 +653,4 @@ async def match_sportdata_game(event: Event) -> None:
             % (event.league, len(matches), event.event_id, event.away, event.home, event_date)
         )
 
-    # Set the matched game
     event.sportdata_game = matches[0]

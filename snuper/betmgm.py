@@ -52,7 +52,7 @@ logger = configure_colored_logger(__name__, YELLOW)
 
 
 CDS_API_BASE = "https://www.co.betmgm.com/cds-api/bettingoffer/fixture-view"
-CDS_ACCESS_ID = "OTU4NDk3MzEtOTAyNS00MjQzLWIxNWEtNTI2MjdhNWM3Zjk3"  # static token from site
+CDS_ACCESS_ID = "OTU4NDk3MzEtOTAyNS00MjQzLWIxNWEtNTI2MjdhNWM3Zjk3"
 
 
 class BetMGMEventScraper(BaseEventScraper):
@@ -71,13 +71,11 @@ class BetMGMEventScraper(BaseEventScraper):
     async def extract_start_time(self, page):
         """Parse the BetMGM DOM to determine the event's UTC start time."""
         try:
-            # Wait for both elements to appear
             await page.wait_for_load_state("domcontentloaded")
             await page.wait_for_timeout(5000)
             await page.wait_for_selector(".event-time span.date", timeout=15000)
             await page.wait_for_selector(".event-time span.time", timeout=15000)
 
-            # Extract text contents via JS
             date_time_texts = await page.evaluate(
                 """
                 () => {
@@ -99,11 +97,9 @@ class BetMGMEventScraper(BaseEventScraper):
             if not date_text or not time_text:
                 raise ValueError("Missing date or time text")
 
-            # BetMGM shows times in UTC to Playwright, so we interpret as UTC
             utc_tz = zoneinfo.ZoneInfo("UTC")
             now_utc = dt.datetime.now(utc_tz)
 
-            # Interpret the date string (relative to UTC "now")
             event_date = None
             if date_text.lower() == "today":
                 event_date = now_utc.date()
@@ -124,10 +120,8 @@ class BetMGMEventScraper(BaseEventScraper):
                 else:
                     raise ValueError(f"Unrecognized date format: {date_text}")
 
-            # Parse time (e.g. "12:08 AM")
             event_time = dt.datetime.strptime(time_text, "%I:%M %p").time()
 
-            # Combine into UTC datetime (since page shows UTC times)
             utc_dt = dt.datetime.combine(event_date, event_time, tzinfo=utc_tz)
 
             self.log.info("%s - converted MGM time to UTC: %s", self.__class__.__name__, utc_dt)
@@ -218,12 +212,10 @@ class BetMGMEventScraper(BaseEventScraper):
             await page.goto(base_url, wait_until="domcontentloaded", timeout=MGM_PAGE_LOAD_TIME)
             await page.wait_for_timeout(MGM_PAGE_LOAD_TIME)
 
-            # Collect all event URLs
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.getAttribute('href'))")
             event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
             event_urls = [self.base_domain + path for path in event_paths]
 
-            # Filter per-league
             if league == League.NBA.value:
                 event_urls = [x for x in event_urls if self._is_nba_game(x)]
             elif league == League.MLB.value:
@@ -235,12 +227,10 @@ class BetMGMEventScraper(BaseEventScraper):
 
             self.log.info("%s - found %d event URLs", self.__class__.__name__, len(event_urls))
 
-            # Define date window
             now_local = dt.datetime.now(self.local_tz)
             today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + dt.timedelta(days=1)
 
-            # Iterate events and intercept their fixture JSONs
             for event_url in event_urls:
                 event_id = event_url.split("-")[-1]
                 fixture_data = {}
@@ -274,9 +264,8 @@ class BetMGMEventScraper(BaseEventScraper):
                 try:
                     self.log.info("%s - navigating to event: %s", self.__class__.__name__, event_url)
                     await page.goto(event_url, wait_until="domcontentloaded", timeout=45000)
-                    await page.wait_for_timeout(4000)  # allow lazy requests
+                    await page.wait_for_timeout(4000)
 
-                    # Wait for capture or timeout
                     for _ in range(10):
                         if fixture_data:
                             break
@@ -305,7 +294,6 @@ class BetMGMEventScraper(BaseEventScraper):
                     else:
                         away_name, home_name = "?", "?"
 
-                    # Extract selections
                     selections = []
                     for market in fixture.get("optionMarkets", []):
                         mname = market.get("name", {}).get("value")
@@ -357,11 +345,9 @@ def transform_markets_to_records(event: Event, markets: list[dict]) -> list[Sele
         odds_am = decimal_to_american(odds_dec)
         market_type = market.get("market_type")
 
-        # Parse line/spread numerically if possible
         line_val = None
         line_raw = market.get("line")
         if line_raw:
-            # e.g. "+1.5" or "O 44.5" or "U 44.5"
             nums = re.findall(r"[-+]?\d*\.?\d+", line_raw)
             if nums:
                 try:

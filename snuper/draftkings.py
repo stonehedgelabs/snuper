@@ -281,7 +281,6 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
 
         mid = item.get("market_id")
 
-        # Infer bet type from selection_id prefix
         prefix = sid[:3] if len(sid) >= 3 else ""
         bet_type = None
         if prefix == "0HC":
@@ -291,7 +290,6 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         elif prefix == "0ML":
             bet_type = "moneyline"
 
-        # Determine match type (priority: exact selection > exact market > prefix)
         match_type = None
         if matches_watched_selection(sid):
             match_type = f"exact:selection:{bet_type}" if bet_type else "exact:selection"

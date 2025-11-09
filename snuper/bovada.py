@@ -94,7 +94,6 @@ def description_filter(league: str) -> str:
 
 def derive_bovada_timestamp(ts: int) -> dt.datetime:
     dt_utc = dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc)
-    # dt_est = dt_utc.astimezone(pytz.timezone("US/Eastern"))
     return dt_utc.astimezone(dt.timezone.utc)
 
 
@@ -105,7 +104,6 @@ def is_league_matchup(path: str, league: str) -> bool:
     def extract_mascots(items: set) -> list[str]:
         return [f"-{item.split("-")[-1]}" for item in items]
 
-    # Map league identifiers to team sets
     league_teams = {
         "mlb": extract_mascots(MGM_MLB_TEAMS),
         "nfl": extract_mascots(MGM_NFL_TEAMS),
@@ -115,13 +113,11 @@ def is_league_matchup(path: str, league: str) -> bool:
     if not league_teams:
         raise ValueError(f"Unsupported league: {league}")
 
-    # Extract the final slug (e.g. "toronto-blue-jays-los-angeles-dodgers-202510292010")
     try:
         slug = path.split("/")[-1]
     except IndexError:
         return False
 
-    # Remove date/time suffix if present
     parts = slug.split("-")
     if parts and parts[-1].isdigit():
         parts = parts[:-1]
@@ -198,7 +194,6 @@ class BovadaEventScraper(BaseEventScraper):
 
         results: list[Event] = []
 
-        # Define today's range in local timezone
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + dt.timedelta(days=1)
@@ -217,7 +212,6 @@ class BovadaEventScraper(BaseEventScraper):
                 try:
                     start_time = derive_bovada_timestamp(ev["startTime"])
 
-                    # Skip events not starting today
                     if not start_of_day <= start_time.astimezone(self.local_tz) < end_of_day:
                         self.log.warning(
                             "%s - date condition *NOT* met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
@@ -239,7 +233,6 @@ class BovadaEventScraper(BaseEventScraper):
                     event_id = ev["id"]
                     competitors = ev.get("competitors", [])
 
-                    # Identify home and away teams
                     home_team = next((c for c in competitors if c.get("home")), {})
                     away_team = next((c for c in competitors if not c.get("home")), {})
 
@@ -249,7 +242,7 @@ class BovadaEventScraper(BaseEventScraper):
                     selections = []
                     for dg in ev.get("displayGroups", []):
                         if dg.get("alternateType"):
-                            continue  # Skip alternate lines
+                            continue
 
                         for market in dg.get("markets", []):
                             period = market.get("period", {})
@@ -281,7 +274,6 @@ class BovadaEventScraper(BaseEventScraper):
                     if not selections:
                         self.log.warning("%s - no selections found", self.__class__.__name__)
 
-                    # Build event URL
                     event_link = ev.get("link", "")
                     url = f"https://www.bovada.lv{event_link}"
 
@@ -404,7 +396,6 @@ class BovadaRunner(BaseRunner):
                         event,
                     )
 
-                    # Send subscription message for this single event
                     await ws.send(subscribe_payload)
                     self.log.info(
                         "%s - sent subscribe payload: %s",
