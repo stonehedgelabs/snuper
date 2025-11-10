@@ -5,6 +5,7 @@ import base64
 import datetime as dt
 import json
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -236,6 +237,37 @@ def _build_record(
         selection_update=selection_update,
         received_at=received_at,
     )
+
+
+def _clone_json(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return deepcopy(value)
+    return value
+
+
+def _format_selection_payload(selection_update: Any) -> dict[str, Any]:
+    if not isinstance(selection_update, dict):
+        return {"data": _clone_json(selection_update)}
+
+    inner = selection_update.get("data")
+    if inner is not None:
+        selection_data = _clone_json(inner)
+    else:
+        selection_data = {
+            key: _clone_json(value) for key, value in selection_update.items() if key not in {"label", "created_at"}
+        }
+
+    payload: dict[str, Any] = {"data": selection_data}
+
+    label = selection_update.get("label")
+    if label is not None:
+        payload["label"] = label
+
+    created_at = selection_update.get("created_at")
+    if created_at is not None:
+        payload["created_at"] = created_at
+
+    return payload
 
 
 def _events_to_payload(events: Sequence[Event]) -> list[dict[str, Any]]:
@@ -525,16 +557,13 @@ class RdsSelectionSink(BaseSink):
 
         def _insert() -> None:
             with self._engine.begin() as conn:
+                data_payload = _format_selection_payload(record.selection_update)
                 stmt = self._selection_table.insert().values(
                     provider=record.provider,
                     league=record.league,
                     event_id=record.event_id,
                     raw_data=record.raw_data,
-                    data={
-                        "raw_event": record.raw_event,
-                        "selection_update": record.selection_update,
-                        "received_at": record.received_at,
-                    },
+                    data=data_payload,
                 )
                 conn.execute(stmt)
 
