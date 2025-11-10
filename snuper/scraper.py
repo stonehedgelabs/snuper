@@ -153,7 +153,7 @@ class BaseEventScraper(abc.ABC):
 
             if merge_sportdata_games:
                 self.log.info(
-                    "%s - matching Sportdata games for %d events in %s", self.__class__.__name__, len(events), league
+                    "%s - matching Sportdata games for %d %s events", self.__class__.__name__, len(events), league
                 )
                 matched_count = 0
                 for event in events:
@@ -162,22 +162,25 @@ class BaseEventScraper(abc.ABC):
                         matched_count += 1
                     except Exception as exc:
                         self.log.warning(
-                            "%s - failed to match Sportdata game for event %s: %s",
+                            "%s - failed to match Sportdata %s game for event %s: %s",
                             self.__class__.__name__,
+                            league,
                             event.event_id,
                             exc,
                         )
                 self.log.info(
-                    "%s - successfully matched %d/%d events to Sportdata games",
+                    "%s - successfully matched %d/%d %s events to Sportdata games",
                     self.__class__.__name__,
                     matched_count,
                     len(events),
+                    league,
                 )
             if merge_rollinginsights_games:
                 self.log.info(
-                    "%s - matching Rolling Insights games for %d events in %s",
+                    "%s - matching Rolling Insights games for %d %s events in %s",
                     self.__class__.__name__,
                     len(events),
+                    league,
                     league,
                 )
                 matched_count = 0
@@ -187,16 +190,18 @@ class BaseEventScraper(abc.ABC):
                         matched_count += 1
                     except Exception as exc:
                         self.log.warning(
-                            "%s - failed to match Rolling Insights game for event %s: %s",
+                            "%s - failed to match Rolling Insights game for %s event %s: %s",
                             self.__class__.__name__,
+                            league,
                             event.event_id,
                             exc,
                         )
                 self.log.info(
-                    "%s - successfully matched %d/%d events to Rolling Insights games",
+                    "%s - successfully matched %d/%d %s events to Rolling Insights games",
                     self.__class__.__name__,
                     matched_count,
                     len(events),
+                    league,
                 )
 
             saved: Path | None = None

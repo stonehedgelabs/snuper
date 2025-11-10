@@ -11,8 +11,8 @@ import rapidfuzz
 from tzlocal import get_localzone
 
 from snuper.config import get_config
-from snuper.constants import RESET, DATE_STAMP_FORMAT
-from snuper.t import Event, Team, SportdataGame, RollingInsightsGame
+from snuper.constants import RESET, DATE_STAMP_FORMAT, League
+from snuper.t import Event, Team, SportdataGame, RollingInsightsGame  # pylint: disable=unused-import
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +265,74 @@ NBA_TEAMS_BY_ABBREV = {
     "WAS": "Washington Wizards",
 }
 
+NFL_TEAMS_BY_ABBREV = {
+    "ARI": "Arizona Cardinals",
+    "ATL": "Atlanta Falcons",
+    "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills",
+    "CAR": "Carolina Panthers",
+    "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals",
+    "CLE": "Cleveland Browns",
+    "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos",
+    "DET": "Detroit Lions",
+    "GB": "Green Bay Packers",
+    "HOU": "Houston Texans",
+    "IND": "Indianapolis Colts",
+    "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs",
+    "LV": "Las Vegas Raiders",
+    "LAC": "Los Angeles Chargers",
+    "LAR": "Los Angeles Rams",
+    "MIA": "Miami Dolphins",
+    "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots",
+    "NO": "New Orleans Saints",
+    "NYG": "New York Giants",
+    "NYJ": "New York Jets",
+    "PHI": "Philadelphia Eagles",
+    "PIT": "Pittsburgh Steelers",
+    "SF": "San Francisco 49ers",
+    "SEA": "Seattle Seahawks",
+    "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans",
+    "WAS": "Washington Commanders",
+}
+
+MLB_TEAMS_BY_ABBREV = {
+    "ARI": "Arizona Diamondbacks",
+    "ATL": "Atlanta Braves",
+    "BAL": "Baltimore Orioles",
+    "BOS": "Boston Red Sox",
+    "CHC": "Chicago Cubs",
+    "CHW": "Chicago White Sox",
+    "CIN": "Cincinnati Reds",
+    "CLE": "Cleveland Guardians",
+    "COL": "Colorado Rockies",
+    "DET": "Detroit Tigers",
+    "HOU": "Houston Astros",
+    "KC": "Kansas City Royals",
+    "LAA": "Los Angeles Angels",
+    "LAD": "Los Angeles Dodgers",
+    "MIA": "Miami Marlins",
+    "MIL": "Milwaukee Brewers",
+    "MIN": "Minnesota Twins",
+    "NYM": "New York Mets",
+    "NYY": "New York Yankees",
+    "OAK": "Oakland Athletics",
+    "PHI": "Philadelphia Phillies",
+    "PIT": "Pittsburgh Pirates",
+    "SD": "San Diego Padres",
+    "SF": "San Francisco Giants",
+    "SEA": "Seattle Mariners",
+    "STL": "St. Louis Cardinals",
+    "TB": "Tampa Bay Rays",
+    "TEX": "Texas Rangers",
+    "TOR": "Toronto Blue Jays",
+    "WSH": "Washington Nationals",
+}
+
 
 def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], league: str) -> str | None:
     """
@@ -272,15 +340,18 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
     For NBA: Uses fuzzy matching against NBA_TEAMS_BY_ABBREV values to find the abbreviation.
     Returns the abbreviation (e.g., "DAL", "WAS") or None if no match found.
     """
-    if league.lower() != "nba":
-        return None
+    teams = NBA_TEAMS_BY_ABBREV
+    if league.lower() == League.MLB.value:
+        teams = MLB_TEAMS_BY_ABBREV
+    if league.lower() == League.NFL.value:
+        teams = NFL_TEAMS_BY_ABBREV
 
     event_team_str = " ".join(event_team_tokens).lower()
 
     best_abbrev = None
     best_score = 0
 
-    for abbrev, team_name in NBA_TEAMS_BY_ABBREV.items():
+    for abbrev, team_name in teams.items():
         score = rapidfuzz.fuzz.ratio(event_team_str, team_name.lower())
         if score > best_score:
             best_score = score
@@ -411,7 +482,6 @@ async def match_rollinginsight_game(event: Event) -> None:
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()
-            _rollinginsights_game = RollingInsightsGame.from_dict(data)
         except httpx.HTTPError as e:
             logger.error("Failed to fetch Rolling Insights schedule for event %s: %s", event.event_id, e)
             raise RuntimeError("Failed to fetch Rolling Insights schedule: %s" % e) from e
@@ -440,6 +510,7 @@ async def match_rollinginsight_game(event: Event) -> None:
 
     matches = []
     for game in league_data:
+        # _rollinginsights_game = RollingInsightsGame.from_dict(game)
         home_team = game["home_team"]
         away_team = game["away_team"]
         try:
@@ -457,7 +528,7 @@ async def match_rollinginsight_game(event: Event) -> None:
                     continue
         except (ValueError, KeyError) as e:
             logger.warning(
-                "Failed to parse game date for game in league %s (event %s): %s",
+                "Failed to parse game date for RollingInsight game in league %s (event %s): %s",
                 league_upper,
                 event.event_id,
                 e,
@@ -465,7 +536,7 @@ async def match_rollinginsight_game(event: Event) -> None:
             continue
         except Exception as e:
             logger.error(
-                "Unexpected error parsing game date for game in league %s (event %s): %s",
+                "Unexpected error parsing game date for RollingInsight game in league %s (event %s): %s",
                 league_upper,
                 event.event_id,
                 e,
@@ -547,7 +618,6 @@ async def match_sportdata_game(event: Event) -> None:
             response = await client.get(url)
             response.raise_for_status()
             data = response.json()
-            _sportdata_game = SportdataGame.from_dict(data)
         except httpx.HTTPError as e:
             logger.error("Failed to fetch Sportdata schedule for event %s: %s", event.event_id, e)
             raise RuntimeError("Failed to fetch Sportdata schedule: %s" % e) from e
@@ -578,9 +648,9 @@ async def match_sportdata_game(event: Event) -> None:
     )
 
     for game in data:
-
+        # _sportdata_game = SportdataGame.from_dict(game)
         status = game["Status"]
-        if status in ("Final", "F/OT", "Canceled", "Cancelled", "Suspended"):
+        if status is None or status in ("Final", "F/OT", "Canceled", "Cancelled", "Suspended"):
             continue
 
         try:
@@ -593,7 +663,7 @@ async def match_sportdata_game(event: Event) -> None:
             game_date = game_dt.strftime("%Y-%m-%d")
         except (ValueError, KeyError) as e:
             logger.warning(
-                "Failed to parse game date for game in league %s (event %s): %s",
+                "Failed to parse game date for Sportdata game in league %s (event %s): %s",
                 league_lower,
                 event.event_id,
                 e,
@@ -601,7 +671,7 @@ async def match_sportdata_game(event: Event) -> None:
             continue
         except Exception as e:
             logger.error(
-                "Unexpected error parsing game date for game in league %s (event %s): %s",
+                "Unexpected error parsing game date for Sportdata game in league %s (event %s): %s",
                 league_lower,
                 event.event_id,
                 e,
