@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import zoneinfo
 import json
 import logging
 import time
@@ -38,13 +39,11 @@ from snuper.utils import (
 
 __all__ = ["BovadaEventScraper", "BovadaMonitor", "run_scrape", "run_monitor"]
 
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [%(lineno)s]: %(message)s",
 )
 logger = configure_colored_logger(__name__, YELLOW)
-
 
 all_market_period_descrs = set()
 all_market_period_abbrvs = set()
@@ -93,8 +92,9 @@ def description_filter(league: str) -> str:
 
 
 def derive_bovada_timestamp(ts: int) -> dt.datetime:
-    dt_utc = dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc)
-    return dt_utc.astimezone(dt.timezone.utc)
+    eastern = zoneinfo.ZoneInfo("America/New_York")
+    naive = dt.datetime.fromtimestamp(ts / 1000)
+    return naive.replace(tzinfo=eastern)
 
 
 def is_league_matchup(path: str, league: str) -> bool:

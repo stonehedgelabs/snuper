@@ -584,12 +584,6 @@ async def match_rollinginsight_game(event: Event) -> None:
 
 
 async def match_sportdata_game(event: Event) -> None:
-    """
-    Fetch Sportdata schedule and match the event to a game.
-    Sets event.sportdata_game to the matched game dict.
-    Raises an error if zero or multiple matches are found.
-    """
-
     api_key = os.environ.get("SPORTSDATAIO_API_KEY")
     if not api_key:
         raise ValueError("SPORTSDATAIO_API_KEY environment variable is not set")
@@ -605,9 +599,10 @@ async def match_sportdata_game(event: Event) -> None:
         season = season_info.regular
     except KeyError as e:
         logger.error("No season configuration found for league %s (event %s)", event.league, event.event_id)
-        raise ValueError("No season configuration found for league %s" % event.league) from e
+        raise ValueError(f"No season configuration found for league {event.league}") from e
 
-    event_date = event.start_time.strftime("%Y-%m-%d")
+    local_tz = get_localzone()
+    event_date = event.start_time.astimezone(local_tz).strftime("%Y-%m-%d")
 
     base_url = config.api.sportsdata_base_url
     league_lower = event.league.lower()
@@ -620,22 +615,14 @@ async def match_sportdata_game(event: Event) -> None:
             data = response.json()
         except httpx.HTTPError as e:
             logger.error("Failed to fetch Sportdata schedule for event %s: %s", event.event_id, e)
-            raise RuntimeError("Failed to fetch Sportdata schedule: %s" % e) from e
+            raise RuntimeError(f"Failed to fetch Sportdata schedule: {e}") from e
         except Exception as e:
             logger.error("Unexpected error while fetching Sportdata schedule for event %s: %s", event.event_id, e)
-            raise RuntimeError("Failed to fetch Sportdata schedule: %s" % e) from e
+            raise RuntimeError(f"Failed to fetch Sportdata schedule: {e}") from e
 
     if not isinstance(data, list):
         logger.error("Invalid response format from Sportdata API: expected list for event %s", event.event_id)
         raise ValueError("Invalid response format: expected list")
-
-    if not data:
-        logger.warning(
-            "No games found in Sportdata schedule for league %s season %s (event %s)",
-            league_lower,
-            season,
-            event.event_id,
-        )
 
     matches = []
     scheduled_games_count = sum(1 for g in data if g.get("Status") == "Scheduled")
@@ -647,10 +634,13 @@ async def match_sportdata_game(event: Event) -> None:
         event_date,
     )
 
+    now = dt.datetime.now(local_tz)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + dt.timedelta(days=1)
+
     for game in data:
-        # _sportdata_game = SportdataGame.from_dict(game)
-        status = game["Status"]
-        if status is None or status in ("Final", "F/OT", "Canceled", "Cancelled", "Suspended"):
+        status = game.get("Status")
+        if not status or status in ("Final", "F/OT", "Canceled", "Cancelled", "Suspended"):
             continue
 
         try:
@@ -658,10 +648,8 @@ async def match_sportdata_game(event: Event) -> None:
             game_dt = dt.datetime.fromisoformat(date_time_utc.replace("Z", "+00:00"))
             if game_dt.tzinfo is None:
                 game_dt = game_dt.replace(tzinfo=dt.timezone.utc)
-            else:
-                game_dt = game_dt.astimezone(dt.timezone.utc)
-            game_date = game_dt.strftime("%Y-%m-%d")
-        except (ValueError, KeyError) as e:
+            game_local = game_dt.astimezone(local_tz)
+        except Exception as e:
             logger.warning(
                 "Failed to parse game date for Sportdata game in league %s (event %s): %s",
                 league_lower,
@@ -669,25 +657,13 @@ async def match_sportdata_game(event: Event) -> None:
                 e,
             )
             continue
-        except Exception as e:
-            logger.error(
-                "Unexpected error parsing game date for Sportdata game in league %s (event %s): %s",
-                league_lower,
-                event.event_id,
-                e,
-            )
-            continue
 
-        if game_date != event_date:
+        if not start_of_day <= game_local < end_of_day:
             continue
 
         remappings = {"NO": "NOP", "SA": "SAS", "NY": "NYK", "GS": "GSW", "PHO": "PHX"}
-
-        home_team_abbrev = game["HomeTeam"]
-        home_team_abbrev = remappings.get(home_team_abbrev, home_team_abbrev)
-
-        away_team_abbrev = game["AwayTeam"]
-        away_team_abbrev = remappings.get(away_team_abbrev, away_team_abbrev)
+        home_team_abbrev = remappings.get(game["HomeTeam"], game["HomeTeam"])
+        away_team_abbrev = remappings.get(game["AwayTeam"], game["AwayTeam"])
 
         home_matches = _match_sportdata_team_abbreviation(event.home, home_team_abbrev, event.league)
         away_matches = _match_sportdata_team_abbreviation(event.away, away_team_abbrev, event.league)
@@ -696,7 +672,7 @@ async def match_sportdata_game(event: Event) -> None:
             matches.append(game)
 
     if len(matches) == 0:
-        logger.warning(
+        logger.error(
             "No matching Sportdata %s game found for event %s (%s @ %s) on %s",
             event.league,
             event.event_id,
@@ -708,6 +684,7 @@ async def match_sportdata_game(event: Event) -> None:
             "No matching Sportdata %s game found for event %s (%s @ %s) on %s"
             % (event.league, event.event_id, event.away, event.home, event_date)
         )
+
     if len(matches) > 1:
         logger.error(
             "Multiple matching %s games found (%d) for event %s (%s @ %s) on %s",
