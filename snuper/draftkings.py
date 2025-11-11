@@ -33,6 +33,7 @@ from snuper.constants import (
     DRAFTKINGS_WEBSOCKET_URL,
     SUPPORTED_LEAGUES,
     Provider,
+    League,
 )
 from snuper.runner import BaseMonitor, BaseRunner
 from snuper.scraper import BaseEventScraper, ScrapeContext
@@ -177,7 +178,7 @@ def parse_spread_markets(event_id):
     return spread_markets
 
 
-def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
+def process_dk_frame(msg_bytes, event, state, selection_ids, market_ids):
 
     if not hasattr(state, "sel"):
         state.sel, state.hashes = {}, {}
@@ -324,11 +325,15 @@ def process_dk_frame(msg_bytes, event_id, state, selection_ids, market_ids):
         mtags = merged.get("market_tags") or []
         market_type = mtags[0] if mtags else None
 
+        # Manual hacky skip of non-game total lines. Drafkings doesn't have a way of doing this?
+        if bet_type == "total" and event.league == League.NBA.value and merged.get("spread_or_line", 0) < 180:
+            continue
+
         hits.append(
             {
                 "selection_id": merged.get("selection_id"),
                 "market_id": merged.get("market_id"),
-                "event_id": event_id,
+                "event_id": event.event_id,
                 "market_name": market_type,
                 "marketType": market_type,
                 "label": merged.get("label"),
@@ -607,7 +612,7 @@ class DraftKingsRunner(BaseRunner):
 
                             hits = process_dk_frame(
                                 msg_bytes,
-                                event.event_id,
+                                event,
                                 state,
                                 selection_ids,
                                 market_ids,
