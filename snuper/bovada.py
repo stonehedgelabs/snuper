@@ -110,9 +110,6 @@ def is_league_matchup(path: str, league: str) -> bool:
         "nba": extract_mascots(MGM_NBA_TEAMS),
     }.get(league)
 
-    if not league_teams:
-        raise ValueError(f"Unsupported league: {league}")
-
     try:
         slug = path.split("/")[-1]
     except IndexError:
@@ -123,8 +120,13 @@ def is_league_matchup(path: str, league: str) -> bool:
         parts = parts[:-1]
     slug = "-".join(parts)
 
-    matched_teams = [team for team in league_teams if team in slug]
-    return len(matched_teams) == 2
+    matched = []
+    remaining = slug
+    for team in league_teams:
+        if team in remaining:
+            matched.append(team)
+            remaining = remaining.replace(team, "", 1)
+    return len(matched) == 2
 
 
 def extract_bovada_odds(event_id: str, data: dict) -> dict:
@@ -183,124 +185,137 @@ class BovadaEventScraper(BaseEventScraper):
         """Fetch today's Bovada full-game events for ``league``."""
         # pylint: disable=too-many-nested-blocks
 
-        url = f"https://www.bovada.lv/services/sports/event/coupon/events/A/description/{context.sport}?marketFilterId=def&preMatchOnly=true&eventsLimit=50&lang=en"
-        try:
-            response = httpx.get(url, headers=event_headers, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-        except Exception as e:
-            self.log.error("%s - Failed to fetch Bovada data: %s", self.__class__.__name__, e)
-            return []
+        def _inner() -> list[Event]:
+            url = f"https://www.bovada.lv/services/sports/event/coupon/events/A/description/{context.sport}?marketFilterId=def&preMatchOnly=true&eventsLimit=50&lang=en"
+            try:
+                response = httpx.get(url, headers=event_headers, timeout=20)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                self.log.error("%s - Failed to fetch Bovada data: %s", self.__class__.__name__, e)
+                return []
 
-        results: list[Event] = []
+            results: list[Event] = []
 
-        now = dt.datetime.now(self.local_tz)
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + dt.timedelta(days=1)
+            now = dt.datetime.now(self.local_tz)
+            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_of_day = start_of_day + dt.timedelta(days=1)
 
-        for group in data:
-            for ev in group.get("events", []):
-                if not is_league_matchup(ev.get("link"), context.league):
-                    self.log.warning(
-                        "%s - Event %s is not a part of league %s",
-                        self.__class__.__name__,
-                        ev.get("link"),
-                        context.league,
-                    )
-                    continue
-
-                try:
-                    start_time = derive_bovada_timestamp(ev["startTime"])
-
-                    if not start_of_day <= start_time.astimezone(self.local_tz) < end_of_day:
+            for group in data:
+                for ev in group.get("events", []):
+                    if not is_league_matchup(ev.get("link"), context.league):
                         self.log.warning(
-                            "%s - date condition *NOT* met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
+                            "%s - Event %s is not a part of league %s",
+                            self.__class__.__name__,
+                            ev.get("link"),
+                            context.league,
+                        )
+                        continue
+
+                    try:
+                        start_time = derive_bovada_timestamp(ev["startTime"])
+
+                        if not start_of_day <= start_time.astimezone(self.local_tz) < end_of_day:
+                            self.log.warning(
+                                "%s - date condition *NOT* met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
+                                self.__class__.__name__,
+                                start_of_day,
+                                start_time.astimezone(self.local_tz),
+                                end_of_day,
+                            )
+                            continue
+
+                        self.log.info(
+                            "%s - date condition met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
                             self.__class__.__name__,
                             start_of_day,
                             start_time.astimezone(self.local_tz),
                             end_of_day,
                         )
+
+                        event_id = ev["id"]
+                        competitors = ev.get("competitors", [])
+
+                        home_team = next((c for c in competitors if c.get("home")), {})
+                        away_team = next((c for c in competitors if not c.get("home")), {})
+
+                        home_tokens = tuple(home_team.get("name", "").lower().split())
+                        away_tokens = tuple(away_team.get("name", "").lower().split())
+
+                        selections = []
+                        for dg in ev.get("displayGroups", []):
+                            if dg.get("alternateType"):
+                                continue
+
+                            for market in dg.get("markets", []):
+                                period = market.get("period", {})
+                                if (
+                                    period.get("description") in {"Game", "Live Game"}
+                                    and period.get("abbreviation") == "G"
+                                    and period.get("main", False)
+                                ):
+                                    market_id = market["id"]
+                                    market_name = market.get("description", "")
+                                    market_type = market.get("descriptionKey", "")
+                                    for outcome in market.get("outcomes", []):
+                                        price = outcome.get("price", {})
+                                        selections.append(
+                                            {
+                                                "selection_id": outcome.get("id"),
+                                                "market_id": market_id,
+                                                "event_id": event_id,
+                                                "market_name": market_name,
+                                                "marketType": market_type,
+                                                "label": outcome.get("description"),
+                                                "odds_american": price.get("american"),
+                                                "odds_decimal": price.get("decimal"),
+                                                "participant": outcome.get("description"),
+                                                "handicap": price.get("handicap"),
+                                            }
+                                        )
+
+                        if not selections:
+                            self.log.warning("%s - no selections found", self.__class__.__name__)
+
+                        event_link = ev.get("link", "")
+                        url = f"https://www.bovada.lv{event_link}"
+
+                        league_name = context.league
+
+                        results.append(
+                            Event(
+                                event_id,
+                                league_name,
+                                url,
+                                start_time,
+                                away_tokens,
+                                home_tokens,
+                                selections,
+                            )
+                        )
+
+                    except Exception as e:
+                        self.log.error(
+                            "%s - Failed to parse Bovada event %s: %s",
+                            self.__class__.__name__,
+                            ev.get("id"),
+                            e,
+                        )
                         continue
 
-                    self.log.info(
-                        "%s - date condition met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
-                        self.__class__.__name__,
-                        start_of_day,
-                        start_time.astimezone(self.local_tz),
-                        end_of_day,
-                    )
+            self.log.info(
+                "%s - retrieved %d %s events for today", self.__class__.__name__, len(results), context.league
+            )
+            return results
 
-                    event_id = ev["id"]
-                    competitors = ev.get("competitors", [])
-
-                    home_team = next((c for c in competitors if c.get("home")), {})
-                    away_team = next((c for c in competitors if not c.get("home")), {})
-
-                    home_tokens = tuple(home_team.get("name", "").lower().split())
-                    away_tokens = tuple(away_team.get("name", "").lower().split())
-
-                    selections = []
-                    for dg in ev.get("displayGroups", []):
-                        if dg.get("alternateType"):
-                            continue
-
-                        for market in dg.get("markets", []):
-                            period = market.get("period", {})
-                            if (
-                                period.get("description") in {"Game", "Live Game"}
-                                and period.get("abbreviation") == "G"
-                                and period.get("main", False)
-                            ):
-                                market_id = market["id"]
-                                market_name = market.get("description", "")
-                                market_type = market.get("descriptionKey", "")
-                                for outcome in market.get("outcomes", []):
-                                    price = outcome.get("price", {})
-                                    selections.append(
-                                        {
-                                            "selection_id": outcome.get("id"),
-                                            "market_id": market_id,
-                                            "event_id": event_id,
-                                            "market_name": market_name,
-                                            "marketType": market_type,
-                                            "label": outcome.get("description"),
-                                            "odds_american": price.get("american"),
-                                            "odds_decimal": price.get("decimal"),
-                                            "participant": outcome.get("description"),
-                                            "handicap": price.get("handicap"),
-                                        }
-                                    )
-
-                    if not selections:
-                        self.log.warning("%s - no selections found", self.__class__.__name__)
-
-                    event_link = ev.get("link", "")
-                    url = f"https://www.bovada.lv{event_link}"
-
-                    league_name = context.league
-
-                    results.append(
-                        Event(
-                            event_id,
-                            league_name,
-                            url,
-                            start_time,
-                            away_tokens,
-                            home_tokens,
-                            selections,
-                        )
-                    )
-
-                except Exception as e:
-                    self.log.error(
-                        "%s - Failed to parse Bovada event %s: %s",
-                        self.__class__.__name__,
-                        ev.get("id"),
-                        e,
-                    )
-                    continue
-
-        self.log.info("%s - retrieved %d %s events for today", self.__class__.__name__, len(results), context.league)
+        # Bovada does this weird thing where sometimes the events endpoint returns the event timestamps in non-EST
+        # format, but if you call the endpoint again, it'll return them in EST format. So account for that.
+        iters = 2
+        results = []
+        while iters and not results:
+            results = _inner()
+            iters -= 1
+            await asyncio.sleep(2)
         return results
 
 
