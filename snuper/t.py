@@ -1,3 +1,9 @@
+"""Core data models for sporting events, selections, teams, and API game representations.
+
+This module defines the primary domain objects used throughout the snuper project
+for representing events, odds selections, team information, and third-party API responses.
+"""
+
 import datetime as dt
 import json
 import logging
@@ -149,6 +155,8 @@ class SelectionChange:
 
 
 class Team:
+    """Representation of a sports team with league, location, and identifier metadata."""
+
     def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         name: str,
@@ -159,6 +167,7 @@ class Team:
         abbreviation: str | None = None,
         sport_radar_io_team_id: int | None = None,
     ):
+        """Initialize a Team instance with name, league, and optional metadata."""
         self.name = name
         self.league = league.lower()
         self.league_color = league_color
@@ -169,12 +178,14 @@ class Team:
         self.id = self.generate_team_id()
 
     def generate_team_id(self) -> str:
+        """Generate a unique team identifier from league, city, and name."""
         league_lower = self.league.lower()
         city_short = re.sub(r"\s+", "", (self.city or "").lower())
         team_short = re.sub(r"\s+", "-", self.name.lower())
         return f"{league_lower}--{city_short}-{team_short}"
 
     def __repr__(self):
+        """Return a string representation of the team."""
         return f"<Team {self.name} ({self.abbreviation or ''})>"
 
 
@@ -300,23 +311,20 @@ class RollingInsightsGame:
 
 
 class RollingInsightsScheduleResponse:
-    """Represent the response from Rolling Insights schedule API."""
+    """Wrapper for Rolling Insights schedule API response data."""
 
     def __init__(self, data: dict[str, list[dict[str, Any]]]) -> None:
-        """Store the schedule response data."""
-
+        """Initialize with raw schedule response data."""
         self.data = data
 
     def get_games_for_league(self, league: str) -> list[dict[str, Any]]:
-        """Return the list of games for a specific league."""
-
+        """Retrieve the list of games for a specific league."""
         return self.data.get(league.upper(), [])
 
 
 class SportdataScheduleResponse:
-    """Represent the response from Sportdata schedule API."""
+    """Wrapper for Sportdata schedule API response data."""
 
     def __init__(self, games: list[dict[str, Any]]) -> None:
-        """Store the schedule response data."""
-
+        """Initialize with a list of game dictionaries."""
         self.games = games

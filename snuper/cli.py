@@ -1,3 +1,12 @@
+"""Command-line interface for the snuper sports odds monitoring tool.
+
+This module provides the main CLI entry point with commands for:
+- Scraping event schedules from sportsbooks
+- Monitoring live odds via websockets or polling
+- Running both scrape and monitor tasks in a coordinated scheduler
+- Configuring output sinks (filesystem, RDS, cache)
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -23,6 +32,8 @@ logger = logging.getLogger("snuper")
 
 
 class ScrapeRunner(Protocol):
+    """Protocol defining the interface for provider-specific scraping functions."""
+
     async def __call__(
         self,
         output_dir: pathlib.Path,
@@ -32,6 +43,7 @@ class ScrapeRunner(Protocol):
     ) -> None: ...
 
 
+# Mapping of provider names to their canonical identifiers.
 PROVIDER_ALIASES: dict[str, str] = {
     Provider.DraftKings.value: Provider.DraftKings.value,
     Provider.BetMGM.value: Provider.BetMGM.value,
@@ -39,6 +51,7 @@ PROVIDER_ALIASES: dict[str, str] = {
     Provider.Bovada.value: Provider.Bovada.value,
 }
 
+# Mapping of providers to their scraping implementations.
 PROVIDER_SCRAPE: dict[str, ScrapeRunner] = {
     Provider.DraftKings.value: draftkings.run_scrape,
     Provider.BetMGM.value: betmgm.run_scrape,
@@ -46,6 +59,7 @@ PROVIDER_SCRAPE: dict[str, ScrapeRunner] = {
     Provider.Bovada.value: bovada.run_scrape,
 }
 
+# Mapping of providers to their live monitoring implementations.
 PROVIDER_MONITOR: dict[str, Callable[..., Awaitable[None]]] = {
     Provider.DraftKings.value: draftkings.run_monitor,
     Provider.BetMGM.value: betmgm.run_monitor,
@@ -55,6 +69,11 @@ PROVIDER_MONITOR: dict[str, Callable[..., Awaitable[None]]] = {
 
 
 def canonical_provider(value: str) -> str:
+    """Resolve a provider string to its canonical name.
+
+    Raises:
+        ValueError: If the provider is not recognized.
+    """
     try:
         return PROVIDER_ALIASES[value.lower()]
     except KeyError as exc:  # pragma: no cover - defensive guard
@@ -62,6 +81,7 @@ def canonical_provider(value: str) -> str:
 
 
 def provider_argument(value: str) -> list[str]:
+    """Parse a comma-separated list of provider names for argparse."""
     items = [chunk.strip() for chunk in value.split(",")]
     providers: list[str] = []
 
@@ -82,6 +102,7 @@ def provider_argument(value: str) -> list[str]:
 
 
 def league_argument(value: str) -> list[str]:
+    """Parse a comma-separated list of league identifiers for argparse."""
     items = [chunk.strip().lower() for chunk in value.split(",")]
     leagues: list[str] = []
 
@@ -99,12 +120,12 @@ def league_argument(value: str) -> list[str]:
     return leagues
 
 
-# Local default daily scrape time; the scheduler converts this into the
-# machine's timezone at runtime.
+# Default time for daily scheduled scraping (08:00 local time).
 DEFAULT_SCRAPE_TIME = dt.time(hour=8)
 
 
 def _parse_scrape_time(value: str) -> dt.time:
+    """Parse a time string (e.g., '6am' or '18:30') into a dt.time object."""
     text = value.strip().lower()
     if not text:
         raise ValueError("Scrape interval must be a non-empty time string")
@@ -143,6 +164,7 @@ def _parse_scrape_time(value: str) -> dt.time:
 
 
 def scrape_interval_argument(value: str) -> dt.time:
+    """Argparse type handler for parsing scrape interval time strings."""
     try:
         return _parse_scrape_time(value)
     except ValueError as exc:  # pragma: no cover - defensive guard
@@ -150,6 +172,7 @@ def scrape_interval_argument(value: str) -> dt.time:
 
 
 def _next_scrape_run(target_time: dt.time, *, now: dt.datetime) -> dt.datetime:
+    """Calculate the next scheduled scrape datetime based on a target time."""
     candidate = now.replace(
         hour=target_time.hour,
         minute=target_time.minute,
@@ -268,6 +291,7 @@ async def _run_scrape_scheduler(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construct the argument parser for the snuper CLI."""
     parser = argparse.ArgumentParser(description="Unified Event Monitor CLI")
     parser.add_argument(
         "-p",
@@ -362,6 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Validate parsed command-line arguments and enforce constraints."""
     if args.config is not None and not args.config.is_file():
         parser.error("--config must point to an existing configuration file")
     sink_type = SinkType(args.sink)
@@ -393,6 +418,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 
 async def dispatch(args: argparse.Namespace) -> None:
+    """Execute the requested CLI task (scrape, monitor, or run)."""
     if args.config is not None:
         load_config(args.config)
         logger.info("Loaded configuration from %s", args.config)
@@ -490,6 +516,7 @@ async def dispatch(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Main entry point for the snuper CLI application."""
     parser = build_parser()
     args = parser.parse_args()
     validate_args(parser, args)

@@ -28,23 +28,37 @@ snapshots, and streaming live odds updates.
 ## Usage
 
 ```text
-usage: snuper [-h] [-p PROVIDER] -t {scrape,monitor} [-l LEAGUE] [-o FS_SINK_DIR] [-i INTERVAL] [--overwrite] [--sink {fs,rds,cache}] [--rds-uri RDS_URI] [--rds-table RDS_TABLE] [--cache-uri CACHE_URI]
+usage: snuper [-h] [-p PROVIDER] -t {scrape,monitor,run} [-c CONFIG]
+              [-l LEAGUE] [--fs-sink-dir FS_SINK_DIR]
+              [--monitor-interval MONITOR_INTERVAL]
+              [--scrape-interval SCRAPE_INTERVAL] [--overwrite]
+              [--sink {fs,rds,cache}] [--rds-uri RDS_URI]
+              [--rds-table RDS_TABLE] [--cache-uri CACHE_URI]
               [--cache-ttl CACHE_TTL] [--cache-max-items CACHE_MAX_ITEMS]
+              [--merge-sportdata-games] [--merge-rollinginsights-games]
+              [--merge-all-games]
 
 Unified Event Monitor CLI
 
 options:
   -h, --help            show this help message and exit
   -p PROVIDER, --provider PROVIDER
-                        Comma-separated list of sportsbook providers (omit to run all)
-  -t {scrape,monitor}, -task {scrape,monitor}, --task {scrape,monitor}
+                        Comma-separated list of sportsbook providers (omit to
+                        run all)
+  -t {scrape,monitor,run}, --task {scrape,monitor,run}
                         Operation to perform
+  -c CONFIG, --config CONFIG
+                        Path to the TOML configuration file
   -l LEAGUE, --league LEAGUE
-                        Comma-separated list of leagues to limit (omit for all)
-  -o FS_SINK_DIR, --fs-sink-dir FS_SINK_DIR
+                        Comma-separated list of leagues to limit (omit for
+                        all)
+  --fs-sink-dir FS_SINK_DIR
                         Base directory for filesystem snapshots and odds logs
-  -i INTERVAL, --interval INTERVAL
-                        Refresh interval in seconds (DraftKings monitor only)
+  --monitor-interval MONITOR_INTERVAL
+                        Refresh interval in seconds for the DraftKings monitor
+  --scrape-interval SCRAPE_INTERVAL
+                        Local time-of-day for scheduled scrapes when using
+                        --task run (e.g. 8am, 20:30); defaults to 08:00
   --overwrite           Overwrite existing snapshots instead of skipping
   --sink {fs,rds,cache}
                         Destination sink for selection updates (default: fs)
@@ -57,11 +71,24 @@ options:
                         Expiration window in seconds for cache sink entries
   --cache-max-items CACHE_MAX_ITEMS
                         Maximum list length per event stored in the cache sink
+  --merge-sportdata-games
+                        Match and merge Sportdata games with scraped events
+                        before saving (requires --task scrape)
+  --merge-rollinginsights-games
+                        Match and merge Rolling Insights games with scraped
+                        events before saving (requires --task scrape)
+  --merge-all-games     Match and merge both Sportdata and Rolling Insights
+                        games (equivalent to using both --merge-sportdata-
+                        games and --merge-rollinginsights-games)
 ```
 
 - Providers must be supplied using their full names (e.g., `draftkings`,
   `betmgm`, `bovada`, `fanduel`). Omit `--provider` to run every available
   scraper or monitor.
+- **Three task modes:**
+  - `scrape`: Collect today's events and save snapshots
+  - `monitor`: Stream live odds for events in saved snapshots
+  - `run`: Execute both scrape and monitor in a coordinated scheduler (scrapes at `--scrape-interval`, monitors continuously)
 - `--fs-sink-dir` is required when `--sink=fs`; for other sinks a temporary
   staging directory is created automatically if you omit the flag.
 - Select a destination with `--sink {fs,rds,cache}` and supply the matching
@@ -74,30 +101,42 @@ options:
   and `received_at`.
 - Restrict execution with `--league nba,mlb` for targeted runs.
 - Use `--overwrite` to replace existing daily snapshots during a rescrape.
-- DraftKings monitors honor `--interval`; other providers pace themselves.
+- Use `--config` to specify a TOML configuration file for API keys and other settings.
+- Use `--merge-sportdata-games` or `--merge-rollinginsights-games` (or `--merge-all-games` for both)
+  to enrich scraped events with official game data from third-party APIs.
+- DraftKings monitors honor `--monitor-interval`; other providers pace themselves.
+- When using `--task run`, specify `--scrape-interval` (e.g., `8am`, `20:30`) to control
+  the daily scrape schedule (defaults to 08:00 local time).
 
 Examples:
 
 ```sh
-$ poetry run snuper --task scrape --fs-sink-dir data
-```
-- Run every supported scraper for all providers and leagues, writing fresh daily snapshots.
-
-```sh
-$ poetry run snuper -p draftkings,betmgm --task monitor --fs-sink-dir data
-```
-- Start DraftKings and BetMGM monitors using their latest snapshots and default pacing.
-
-```sh
-$ poetry run snuper \
-  --task monitor \
-  --provider bovada \
+$ super --task scrape \
+  --provider bovada,draftkings \
   --sink rds \
-  --rds-uri postgresql+psycopg://snuper:secret@db.example.com:5432/snuper \
-  --rds-table selection_updates
+  --rds-uri postgresql://postgres@localhost/arbitration \
+  --rds-table snuper_events \
+  --config /Users/rashad/dev/repos/arbitration/arb-rs/config.toml \
+  --merge-all-games \
+  --overwrite
 ```
-- Stream Bovada odds into PostgreSQL; the sink creates `selection_updates` and
-  `selection_updates_snapshots` tables on first run.
+- Run the `bovada` and `draftkings` scrapers for all leagues, writing fresh daily snapshots of today's games.
+
+> This `scrape` task is performed every morning.
+
+
+```sh
+$ snuper --task monitor \
+  --provider bovada,draftkings \
+  --sink rds \
+  --rds-uri postgresql://postgres@localhost/arbitration \
+  --rds-table snuper_events
+```
+
+- Run the `bovada` and `draftkings` task monitors for all leagues, writing each odds update from all live games.
+
+> This `monitor` task runs in perpetuity but only stores data when games are live.
+
 
 ### RDS table naming
 
@@ -109,15 +148,6 @@ value must be supplied to both `--task scrape` and `--task monitor`; mixing
 different names means the monitor will look in an empty table and skip all
 events. Pick a prefix you like (for example `snuper_events`) and stick with it
 for every CLI invocation so both tasks stay in sync.
-
-```sh
-$ poetry run snuper \
-  --task monitor \
-  --provider draftkings \
-  --interval 45 \
-  --fs-sink-dir data
-```
-- Monitor DraftKings only, overriding the websocket refresh cadence to 45 seconds.
 
 ## Coverage
 
@@ -240,14 +270,17 @@ $ poetry run pytest
 
 ## Glossary
 
-- **Task** – One of `scrape` or `monitor`. Tasks define whether the CLI is
-  collecting schedules or streaming odds.
+- **Task** – One of `scrape`, `monitor`, or `run`. Tasks define whether the CLI is
+  collecting schedules, streaming odds, or coordinating both.
 - **Scrape** – A task that navigates provider frontends or APIs to discover the
   upcoming schedule, captures team metadata, and stores selections for later
   monitoring.
 - **Monitor** – A task that reuses stored selections to ingest live odds via
   websockets or polling loops, emitting JSONL records with heartbeats for idle
   games.
+- **Run** – A task that coordinates both scrape and monitor operations: schedules
+  daily scrapes at `--scrape-interval` (default 08:00 local time) while continuously
+  monitoring live odds.
 - **Provider** – A sportsbook integration (`draftkings`, `betmgm`, `bovada`,
   `fanduel`). Providers expose both scrape and monitor entry points when
   implemented.

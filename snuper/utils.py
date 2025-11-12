@@ -1,3 +1,14 @@
+"""Utility functions for event handling, team matching, logging, and data formatting.
+
+This module provides helper functions for:
+- File path generation for event snapshots and odds logs
+- Odds format conversion (decimal to American)
+- Event data loading and serialization
+- Colored logging configuration
+- Duration and byte size formatting
+- Team name fuzzy matching for Sportdata and Rolling Insights APIs
+"""
+
 import datetime as dt
 import json
 import logging
@@ -232,6 +243,7 @@ def team_to_mgm_constant(team: Team) -> str | None:
     return None
 
 
+# NBA team abbreviation to full name mapping.
 NBA_TEAMS_BY_ABBREV = {
     "ATL": "Atlanta Hawks",
     "BOS": "Boston Celtics",
@@ -265,6 +277,7 @@ NBA_TEAMS_BY_ABBREV = {
     "WAS": "Washington Wizards",
 }
 
+# NFL team abbreviation to full name mapping.
 NFL_TEAMS_BY_ABBREV = {
     "ARI": "Arizona Cardinals",
     "ATL": "Atlanta Falcons",
@@ -300,6 +313,7 @@ NFL_TEAMS_BY_ABBREV = {
     "WAS": "Washington Commanders",
 }
 
+# MLB team abbreviation to full name mapping.
 MLB_TEAMS_BY_ABBREV = {
     "ARI": "Arizona Diamondbacks",
     "ATL": "Atlanta Braves",

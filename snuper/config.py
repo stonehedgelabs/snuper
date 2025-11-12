@@ -1,3 +1,9 @@
+"""Configuration management module for loading and accessing application settings.
+
+This module provides dataclass-based configuration structures that load from TOML files
+and offer type-safe access to server, cache, database, API, and season settings.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -10,6 +16,8 @@ import tomllib
 
 @dataclass(frozen=True, slots=True)
 class ServerConfig:
+    """HTTP server configuration settings."""
+
     host: str
     port: int
     cors_origins: str
@@ -17,6 +25,7 @@ class ServerConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ServerConfig":
+        """Create ServerConfig from a dictionary mapping."""
         return cls(
             host=str(data["host"]),
             port=int(data["port"]),
@@ -27,6 +36,8 @@ class ServerConfig:
 
 @dataclass(frozen=True, slots=True)
 class CacheTTLConfig:
+    """Time-to-live configuration for various cached resources (in seconds)."""
+
     team_profiles: int
     schedule: int
     postseason_schedule: int
@@ -45,6 +56,7 @@ class CacheTTLConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CacheTTLConfig":
+        """Create CacheTTLConfig from a dictionary mapping."""
         return cls(
             team_profiles=int(data["team_profiles"]),
             schedule=int(data["schedule"]),
@@ -66,6 +78,8 @@ class CacheTTLConfig:
 
 @dataclass(frozen=True, slots=True)
 class CacheConfig:
+    """Caching layer configuration including Redis connection and TTL settings."""
+
     enabled: bool
     mode: str
     redis_url: str
@@ -74,6 +88,7 @@ class CacheConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CacheConfig":
+        """Create CacheConfig from a dictionary mapping."""
         ttl_config = CacheTTLConfig.from_dict(data["ttl"])
         return cls(
             enabled=bool(data["enabled"]),
@@ -86,11 +101,14 @@ class CacheConfig:
 
 @dataclass(frozen=True, slots=True)
 class RdsConfig:
+    """Relational database configuration for PostgreSQL connections."""
+
     enabled: bool
     postgres_uri: str
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RdsConfig":
+        """Create RdsConfig from a dictionary mapping."""
         return cls(
             enabled=bool(data["enabled"]),
             postgres_uri=str(data["postgres_uri"]),
@@ -99,12 +117,15 @@ class RdsConfig:
 
 @dataclass(frozen=True, slots=True)
 class SeasonWindow:
+    """Time windows defining regular and postseason periods for a league."""
+
     regular: str
     postseason: str
     postseason_start: str
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SeasonWindow":
+        """Create SeasonWindow from a dictionary mapping."""
         return cls(
             regular=str(data["regular"]),
             postseason=str(data["postseason"]),
@@ -114,14 +135,22 @@ class SeasonWindow:
 
 @dataclass(frozen=True, slots=True)
 class SeasonsConfig:
+    """Season configuration mapping leagues to their current season windows."""
+
     current_seasons: dict[str, SeasonWindow]
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SeasonsConfig":
+        """Create SeasonsConfig from a dictionary mapping."""
         current = {key.lower(): SeasonWindow.from_dict(value) for key, value in data.get("current_seasons", {}).items()}
         return cls(current_seasons=current)
 
     def get_season(self, league: str) -> SeasonWindow:
+        """Retrieve the season window for a given league identifier.
+
+        Raises:
+            KeyError: If the league is not configured.
+        """
         try:
             return self.current_seasons[league.lower()]
         except KeyError as exc:  # pragma: no cover - defensive guard
@@ -130,6 +159,8 @@ class SeasonsConfig:
 
 @dataclass(frozen=True, slots=True)
 class RedditApiConfig:
+    """Reddit API configuration including comment limits and user agent."""
+
     default_comment_limit: int
     max_comment_limit: int
     default_sort: str
@@ -137,6 +168,7 @@ class RedditApiConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RedditApiConfig":
+        """Create RedditApiConfig from a dictionary mapping."""
         return cls(
             default_comment_limit=int(data["default_comment_limit"]),
             max_comment_limit=int(data["max_comment_limit"]),
@@ -147,6 +179,8 @@ class RedditApiConfig:
 
 @dataclass(frozen=True, slots=True)
 class ApiConfig:
+    """External API configuration including base URLs and timeouts."""
+
     sportsdata_base_url: str
     rolling_insights_base_url: str
     twitter_base_url: str
@@ -155,6 +189,7 @@ class ApiConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ApiConfig":
+        """Create ApiConfig from a dictionary mapping."""
         reddit_api_data = data.get("reddit_api")
         reddit_api = RedditApiConfig.from_dict(reddit_api_data) if reddit_api_data else None
         if reddit_api is None:
@@ -170,6 +205,8 @@ class ApiConfig:
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
+    """Top-level application configuration aggregating all config sections."""
+
     server: ServerConfig
     cache: CacheConfig
     rds: RdsConfig
@@ -178,6 +215,7 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AppConfig":
+        """Create AppConfig from a dictionary mapping."""
         return cls(
             server=ServerConfig.from_dict(data["server"]),
             cache=CacheConfig.from_dict(data["cache"]),
@@ -187,10 +225,22 @@ class AppConfig:
         )
 
 
+# Global configuration instance.
 _CONFIG: AppConfig | None = None
 
 
 def load_config(path: str | Path) -> AppConfig:
+    """Load configuration from a TOML file and store it globally.
+
+    Args:
+        path: File path to the TOML configuration file.
+
+    Returns:
+        The loaded AppConfig instance.
+
+    Raises:
+        FileNotFoundError: If the configuration file does not exist.
+    """
     file_path = Path(path).expanduser()
     if not file_path.is_file():  # pragma: no cover - defensive guard
         raise FileNotFoundError(f"Configuration file not found: {file_path}")
@@ -203,6 +253,14 @@ def load_config(path: str | Path) -> AppConfig:
 
 
 def get_config() -> AppConfig:
+    """Retrieve the globally loaded configuration.
+
+    Returns:
+        The current AppConfig instance.
+
+    Raises:
+        RuntimeError: If configuration has not been loaded yet.
+    """
     if _CONFIG is None:  # pragma: no cover - defensive guard
         raise RuntimeError("Configuration has not been loaded")
     return _CONFIG
