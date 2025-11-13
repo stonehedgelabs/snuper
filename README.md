@@ -35,7 +35,8 @@ usage: cli.py [-h] [-p PROVIDER] -t {scrape,monitor} [-c CONFIG] [-l LEAGUE]
               [--rds-table RDS_TABLE] [--cache-uri CACHE_URI]
               [--cache-ttl CACHE_TTL] [--cache-max-items CACHE_MAX_ITEMS]
               [--merge-sportdata-games] [--merge-rollinginsights-games]
-              [--merge-all-games]
+              [--merge-all-games] [--log-file LOG_FILE]
+              [--log-level LOG_LEVEL] [--max-log-filesize MAX_LOG_FILESIZE]
 
 Unified Event Monitor CLI
 
@@ -76,6 +77,14 @@ options:
   --merge-all-games     Match and merge both Sportdata and Rolling Insights
                         games (equivalent to using both --merge-sportdata-
                         games and --merge-rollinginsights-games)
+  --log-file LOG_FILE   Path to log file (default: /tmp/snuper-YYYYmmdd.log)
+  --log-level LOG_LEVEL
+                        Logging level as a string (debug, info, warning,
+                        error, critical) or number 0-50 (default: info)
+  --max-log-filesize MAX_LOG_FILESIZE
+                        Maximum log file size before rotation with FIFO
+                        eviction (default: 10MB, accepts formats like '10MB',
+                        '5mb', '100Mb')
 ```
 
 - Providers must be supplied using their full names (e.g., `draftkings`,
@@ -98,12 +107,16 @@ options:
 - Use `--merge-sportdata-games` or `--merge-rollinginsights-games` (or `--merge-all-games` for both)
   to enrich scraped events with official game data from third-party APIs.
 - DraftKings monitors honor `--monitor-interval`; other providers pace themselves.
+- Configure logging with `--log-file` (default: `/tmp/snuper-YYYYmmdd.log`), `--log-level`
+  (default: `info`, accepts string levels like `debug` or numeric levels 0-50), and
+  `--max-log-filesize` (default: `10MB`, accepts formats like `10MB`, `5mb`, or `100Mb`).
+  When the log file reaches the maximum size, earlier logs are evicted (FIFO behavior) to
+  keep the file size under the limit.
 
 Examples:
 
 ```sh
 $ super --task scrape \
-  --provider bovada,draftkings \
   --sink rds \
   --rds-uri postgresql://postgres@localhost/arbitration \
   --rds-table snuper_events \
@@ -118,7 +131,6 @@ $ super --task scrape \
 
 ```sh
 $ snuper --task monitor \
-  --provider bovada,draftkings \
   --sink rds \
   --rds-uri postgresql://postgres@localhost/arbitration \
   --rds-table snuper_events

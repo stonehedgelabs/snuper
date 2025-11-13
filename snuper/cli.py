@@ -12,8 +12,11 @@ import argparse
 import asyncio
 import logging
 import pathlib
+import re
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from typing import Protocol
 
 from dotenv import load_dotenv
@@ -115,6 +118,87 @@ def league_argument(value: str) -> list[str]:
         raise argparse.ArgumentTypeError("No leagues supplied")
 
     return leagues
+
+
+def parse_filesize(value: str) -> int:
+    """Parse a filesize string (e.g., '10MB', '5mb', '100Mb') to bytes."""
+    pattern = r'^(\d+(?:\.\d+)?)\s*(mb|MB|Mb)$'
+    match = re.match(pattern, value.strip())
+    if not match:
+        raise argparse.ArgumentTypeError(
+            f"Invalid filesize format: {value}. Expected format like '10MB', '5mb', or '100Mb'"
+        )
+    size_value = float(match.group(1))
+    return int(size_value * 1024 * 1024)
+
+
+def parse_log_level(value: str) -> int:
+    """Parse a log level string or number to a logging level constant."""
+    # Try to parse as a number first
+    try:
+        level_num = int(value)
+        # Validate it's a reasonable logging level (0-50)
+        if 0 <= level_num <= 50:
+            return level_num
+        raise argparse.ArgumentTypeError(f"Log level number must be between 0 and 50, got {level_num}")
+    except ValueError as exc:
+        # Not a number, treat as a string
+        level_name = value.upper()
+        level = logging.getLevelName(level_name)
+        if isinstance(level, int):
+            return level
+        raise exc
+
+
+def configure_logging(
+    log_file: pathlib.Path | None,
+    log_level: int,
+    max_log_filesize: int,
+    log_stdout: bool = False,
+) -> None:
+    """Configure logging with rotating file handler and optional console output.
+
+    Args:
+        log_file: Path to log file, or None to use default /tmp/snuper-YYYYmmdd.log
+        log_level: Logging level (e.g., logging.INFO)
+        max_log_filesize: Maximum log file size in bytes before rotation
+        log_stdout: If True, also log to stdout/console
+    """
+    if log_file is None:
+        log_file = pathlib.Path(f"/tmp/snuper-{datetime.now().strftime('%Y%m%d')}.log")
+
+    # Ensure the log file directory exists
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Configure the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Remove any existing handlers
+    root_logger.handlers.clear()
+
+    # Create rotating file handler with FIFO behavior (backupCount=0 means only one file)
+    file_handler = RotatingFileHandler(
+        filename=log_file,
+        maxBytes=max_log_filesize,
+        backupCount=0,  # FIFO: no backup files, just overwrite when size is exceeded
+        encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    file_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(file_formatter)
+    root_logger.addHandler(file_handler)
+
+    # Also add console handler for real-time feedback
+    if log_stdout:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        console_formatter = logging.Formatter("%(levelname)s - %(message)s")
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
 
 
 async def _run_scrape_task(
@@ -272,6 +356,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Match and merge both Sportdata and Rolling Insights games (equivalent to using both --merge-sportdata-games and --merge-rollinginsights-games)",
     )
+    parser.add_argument(
+        "--log-file",
+        type=pathlib.Path,
+        help=f"Path to log file (default: /tmp/snuper-{datetime.now().strftime('%Y%m%d')}.log)",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=parse_log_level,
+        default=logging.INFO,
+        help="Logging level as a string (debug, info, warning, error, critical) or number 0-50 (default: info)",
+    )
+    parser.add_argument(
+        "--max-log-filesize",
+        type=parse_filesize,
+        default="10MB",
+        help="Maximum log file size before rotation with FIFO eviction (default: 10MB, accepts formats like '10MB', '5mb', '100Mb')",
+    )
+    parser.add_argument(
+        "--log-stdout",
+        action="store_true",
+        help="Log to stdout as well as to --log-file",
+    )
     return parser
 
 
@@ -306,6 +412,14 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 async def dispatch(args: argparse.Namespace) -> None:
     """Execute the requested CLI task (scrape or monitor)."""
+    # Configure logging before any other operations
+    configure_logging(
+        log_file=args.log_file,
+        log_level=args.log_level,
+        max_log_filesize=args.max_log_filesize,
+        log_stdout=args.log_stdout,
+    )
+
     if args.config is not None:
         load_config(args.config)
         logger.info("Loaded configuration from %s", args.config)
