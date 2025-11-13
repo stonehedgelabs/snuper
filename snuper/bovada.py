@@ -201,7 +201,7 @@ class BovadaEventScraper(BaseEventScraper):
             for group in data:
                 for ev in group.get("events", []):
                     if not is_league_matchup(ev.get("link"), context.league):
-                        self.log.warning(
+                        self.log.debug(
                             "%s - Event %s is not a part of league %s",
                             self.__class__.__name__,
                             ev.get("link"),
@@ -211,13 +211,14 @@ class BovadaEventScraper(BaseEventScraper):
 
                     try:
                         start_time = derive_bovada_timestamp(ev["startTime"])
+                        start_time_local = start_time.astimezone(self.local_tz)
 
-                        if not start_of_day <= start_time.astimezone(self.local_tz) < end_of_day:
+                        if not start_of_day <= start_time_local < end_of_day:
                             self.log.warning(
                                 "%s - date condition *NOT* met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
                                 self.__class__.__name__,
                                 start_of_day,
-                                start_time.astimezone(self.local_tz),
+                                start_time_local,
                                 end_of_day,
                             )
                             continue
@@ -226,7 +227,7 @@ class BovadaEventScraper(BaseEventScraper):
                             "%s - date condition met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
                             self.__class__.__name__,
                             start_of_day,
-                            start_time.astimezone(self.local_tz),
+                            start_time_local,
                             end_of_day,
                         )
 

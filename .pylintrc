@@ -37,8 +37,9 @@ disable=
     E0401,  # import-error (often false positive in virtualenvs)
     R1732,  # consider-using-with (handled safely in Playwright contexts)
     E1205,  # make logging great again
-    C0301,  # i like long lines
-    C0209,  # i don't like fstrings
+    C0301,  # 120 width is ok
+    C0209,  # fstrings are visually unappealing
+    R1714,  # why construct a set vs a constant comparison?
 
 # Enable a few important modern warnings
 enable=

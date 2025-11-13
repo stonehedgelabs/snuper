@@ -28,10 +28,9 @@ snapshots, and streaming live odds updates.
 ## Usage
 
 ```text
-usage: snuper [-h] [-p PROVIDER] -t {scrape,monitor,run} [-c CONFIG]
-              [-l LEAGUE] [--fs-sink-dir FS_SINK_DIR]
-              [--monitor-interval MONITOR_INTERVAL]
-              [--scrape-interval SCRAPE_INTERVAL] [--overwrite]
+usage: cli.py [-h] [-p PROVIDER] -t {scrape,monitor} [-c CONFIG] [-l LEAGUE]
+              [--fs-sink-dir FS_SINK_DIR]
+              [--monitor-interval MONITOR_INTERVAL] [--overwrite]
               [--sink {fs,rds,cache}] [--rds-uri RDS_URI]
               [--rds-table RDS_TABLE] [--cache-uri CACHE_URI]
               [--cache-ttl CACHE_TTL] [--cache-max-items CACHE_MAX_ITEMS]
@@ -45,7 +44,7 @@ options:
   -p PROVIDER, --provider PROVIDER
                         Comma-separated list of sportsbook providers (omit to
                         run all)
-  -t {scrape,monitor,run}, --task {scrape,monitor,run}
+  -t {scrape,monitor}, --task {scrape,monitor}
                         Operation to perform
   -c CONFIG, --config CONFIG
                         Path to the TOML configuration file
@@ -56,9 +55,6 @@ options:
                         Base directory for filesystem snapshots and odds logs
   --monitor-interval MONITOR_INTERVAL
                         Refresh interval in seconds for the DraftKings monitor
-  --scrape-interval SCRAPE_INTERVAL
-                        Local time-of-day for scheduled scrapes when using
-                        --task run (e.g. 8am, 20:30); defaults to 08:00
   --overwrite           Overwrite existing snapshots instead of skipping
   --sink {fs,rds,cache}
                         Destination sink for selection updates (default: fs)
@@ -85,10 +81,9 @@ options:
 - Providers must be supplied using their full names (e.g., `draftkings`,
   `betmgm`, `bovada`, `fanduel`). Omit `--provider` to run every available
   scraper or monitor.
-- **Three task modes:**
+- **Two task modes:**
   - `scrape`: Collect today's events and save snapshots
   - `monitor`: Stream live odds for events in saved snapshots
-  - `run`: Execute both scrape and monitor in a coordinated scheduler (scrapes at `--scrape-interval`, monitors continuously)
 - `--fs-sink-dir` is required when `--sink=fs`; for other sinks a temporary
   staging directory is created automatically if you omit the flag.
 - Select a destination with `--sink {fs,rds,cache}` and supply the matching
@@ -103,8 +98,6 @@ options:
 - Use `--merge-sportdata-games` or `--merge-rollinginsights-games` (or `--merge-all-games` for both)
   to enrich scraped events with official game data from third-party APIs.
 - DraftKings monitors honor `--monitor-interval`; other providers pace themselves.
-- When using `--task run`, specify `--scrape-interval` (e.g., `8am`, `20:30`) to control
-  the daily scrape schedule (defaults to 08:00 local time).
 
 Examples:
 
@@ -264,17 +257,14 @@ $ poetry run pytest
 
 ## Glossary
 
-- **Task** – One of `scrape`, `monitor`, or `run`. Tasks define whether the CLI is
-  collecting schedules, streaming odds, or coordinating both.
+- **Task** – One of `scrape` or `monitor`. Tasks define whether the CLI is
+  collecting schedules or streaming odds.
 - **Scrape** – A task that navigates provider frontends or APIs to discover the
   upcoming schedule, captures team metadata, and stores selections for later
   monitoring.
 - **Monitor** – A task that reuses stored selections to ingest live odds via
   websockets or polling loops, emitting JSONL records with heartbeats for idle
   games.
-- **Run** – A task that coordinates both scrape and monitor operations: schedules
-  daily scrapes at `--scrape-interval` (default 08:00 local time) while continuously
-  monitoring live odds.
 - **Provider** – A sportsbook integration (`draftkings`, `betmgm`, `bovada`,
   `fanduel`). Providers expose both scrape and monitor entry points when
   implemented.
