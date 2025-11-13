@@ -428,23 +428,25 @@ def _extract_mascot_from_team_name(team_name: str) -> str:
 
 
 def _fuzzy_match_team_name(event_team_tokens: tuple[str, ...], api_team_name: str) -> bool:
-    """
-    Fuzzy match event team tokens to API team name.
+    """Fuzzy match event team tokens to API team name.
+
     Returns True if the match score is above the threshold.
 
     First tries matching the full team name (e.g., "no pelicans" vs "New Orleans Pelicans"),
     then falls back to mascot-only matching for cases with multi-word mascots.
+
+    Optimized to avoid repeated normalization calls.
     """
 
     def normalize(s: str) -> str:
         return re.sub(r"\s+", " ", s.lower().replace("-", " ").strip())
 
+    # Cache normalized values to avoid repeated computation.
     api_team_normalized = normalize(api_team_name)
-
     event_team_str = normalize(" ".join(event_team_tokens))
 
+    # Try full team name matching first (two different scoring methods).
     full_score = rapidfuzz.fuzz.token_sort_ratio(event_team_str, api_team_normalized)
-
     if full_score >= 60:
         return True
 
@@ -452,17 +454,17 @@ def _fuzzy_match_team_name(event_team_tokens: tuple[str, ...], api_team_name: st
     if full_score_ratio >= 60:
         return True
 
+    # Fall back to mascot matching - pre-compute normalized mascot.
     api_mascot = _extract_mascot_from_team_name(api_team_name)
     api_mascot_normalized = normalize(api_mascot)
 
+    # Pre-compute all possible event mascot variations to avoid repeated work.
     max_words = min(3, len(event_team_tokens))
+    event_mascot_variants = [normalize(" ".join(event_team_tokens[-n:])) for n in range(1, max_words + 1)]
 
-    for n in range(1, max_words + 1):
-        event_mascot_words = event_team_tokens[-n:]
-        event_mascot = normalize(" ".join(event_mascot_words))
-
+    # Check all mascot variants against the API mascot.
+    for event_mascot in event_mascot_variants:
         score = rapidfuzz.fuzz.ratio(event_mascot, api_mascot_normalized)
-
         if score >= 60:
             return True
 
@@ -652,6 +654,9 @@ async def match_sportdata_game(event: Event) -> None:
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + dt.timedelta(days=1)
 
+    # Team abbreviation remappings - defined once outside loop for efficiency.
+    remappings = {"NO": "NOP", "SA": "SAS", "NY": "NYK", "GS": "GSW", "PHO": "PHX"}
+
     for game in data:
         status = game.get("Status")
         if not status or status in ("Final", "F/OT", "Canceled", "Cancelled", "Suspended"):
@@ -675,7 +680,6 @@ async def match_sportdata_game(event: Event) -> None:
         if not start_of_day <= game_local < end_of_day:
             continue
 
-        remappings = {"NO": "NOP", "SA": "SAS", "NY": "NYK", "GS": "GSW", "PHO": "PHX"}
         home_team_abbrev = remappings.get(game["HomeTeam"], game["HomeTeam"])
         away_team_abbrev = remappings.get(game["AwayTeam"], game["AwayTeam"])
 

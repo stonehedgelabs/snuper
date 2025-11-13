@@ -116,7 +116,7 @@ class BaseMonitor:
         if start_time.tzinfo is None:
             start_time = start_time.replace(tzinfo=dt.timezone.utc)
             event.start_time = start_time
-        local_start_time = start_time.astimezone(self.local_tz)
+        local_start_time = event.start_time.astimezone(self.local_tz)
         now_local = dt.datetime.now(self.local_tz)
 
         if now_local < local_start_time:
@@ -127,7 +127,6 @@ class BaseMonitor:
                 local_start_time.isoformat(),
             )
             return False
-
         return not event.is_finished()
 
     async def _prune_tasks(self, active_ids: dict[str, set[str]]) -> None:

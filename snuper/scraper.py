@@ -151,6 +151,10 @@ class BaseEventScraper(abc.ABC):
                 self.log.error("%s - failed to scrape %s: %s", self.__class__.__name__, league, exc)
                 continue
 
+            # Match external game data if requested.
+            # Note: Each match function currently fetches the full schedule internally,
+            # which means we make one API call per event. Future optimization could
+            # batch-fetch schedules once per league and pass them to match functions.
             if merge_sportdata_games:
                 self.log.info(
                     "%s - matching Sportdata games for %d %s events", self.__class__.__name__, len(events), league

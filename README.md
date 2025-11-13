@@ -96,9 +96,7 @@ options:
 - When using `--sink=rds`, pass a SQLAlchemy-compatible URI via `--rds-uri` (for example
   `postgresql+psycopg://user:pass@host:5432/snuper`) and the destination table name via
   `--rds-table`. The sink expects the primary table to provide `id`, `provider`, `league`,
-  `event_id`, `data` (JSON/JSONB), and `created_at` columns and manages a
-  `<table>_snapshots` companion with `provider`, `league`, `snapshot_date`, `payload`,
-  and `received_at`.
+  `event_id`, `data` (JSON/JSONB), and `created_at` columns.
 - Restrict execution with `--league nba,mlb` for targeted runs.
 - Use `--overwrite` to replace existing daily snapshots during a rescrape.
 - Use `--config` to specify a TOML configuration file for API keys and other settings.
@@ -141,9 +139,7 @@ $ snuper --task monitor \
 ### RDS table naming
 
 When you pass `--rds-table`, the RDS sink uses that value for both daily
-snapshots *and* streaming selection changes. It stores odds updates in the table
-you provide and automatically manages a companion `<table>_snapshots` table for
-the daily event payloads. Because of this coupling, the same `--rds-table`
+snapshots and streaming selection changes. The same `--rds-table`
 value must be supplied to both `--task scrape` and `--task monitor`; mixing
 different names means the monitor will look in an empty table and skip all
 events. Pick a prefix you like (for example `snuper_events`) and stick with it
@@ -218,13 +214,11 @@ and odds deltas. Each sink stores and reloads data a little differently.
 
 - `scrape` inserts one row per event into the primary `--rds-table`, filling
   the `provider`, `league`, `event_id`, `data`, and `created_at` columns and
-  logging the batch size. The event snapshot is also written to
-  `<table>_snapshots` for historical replay.
+  logging the batch size.
 - `monitor` inserts each odds delta into the same primary table with the
   provider annotated and the raw/normalized payload stored in `data`.
-- `load_snapshots` fetches the most recent snapshot per league from
-  `<table>_snapshots` (respecting any `--league` filter) before runners
-  reconnect.
+- `load_snapshots` fetches the most recent events per league from the primary
+  table (respecting any `--league` filter) before runners reconnect.
 
 ### Cache sink (`--sink=cache`)
 

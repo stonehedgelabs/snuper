@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import zoneinfo
 import json
 import logging
 import time
@@ -92,9 +91,7 @@ def description_filter(league: str) -> str:
 
 
 def derive_bovada_timestamp(ts: int) -> dt.datetime:
-    eastern = zoneinfo.ZoneInfo("America/New_York")
-    naive = dt.datetime.fromtimestamp(ts / 1000)
-    return naive.replace(tzinfo=eastern)
+    return dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc)
 
 
 def is_league_matchup(path: str, league: str) -> bool:

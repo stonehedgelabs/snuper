@@ -131,20 +131,23 @@ class BetMGMEventScraper(BaseEventScraper):
             self.log.warning("%s - could not extract MGM start time: %s", self.__class__.__name__, e)
             return None
 
-    def _is_nba_game(self, event_url: str) -> bool:
-        """Return True when the event URL references an NBA matchup."""
-        url_lower = event_url.lower()
-        return any(team in url_lower for team in MGM_NBA_TEAMS)
+    # Mapping of league to team slug sets for efficient filtering.
+    _LEAGUE_TEAMS = {
+        League.NBA.value: MGM_NBA_TEAMS,
+        League.NFL.value: MGM_NFL_TEAMS,
+        League.MLB.value: MGM_MLB_TEAMS,
+    }
 
-    def _is_nfl_game(self, event_url: str) -> bool:
-        """Return True when the event URL references an NFL matchup."""
-        url_lower = event_url.lower()
-        return any(team in url_lower for team in MGM_NFL_TEAMS)
+    def _is_league_game(self, event_url: str, league: str) -> bool:
+        """Return True when the event URL references a game for the specified league.
 
-    def _is_mlb_game(self, event_url: str) -> bool:
-        """Return True when the event URL references an MLB matchup."""
+        Uses a single pass through the appropriate team set for efficiency.
+        """
         url_lower = event_url.lower()
-        return any(team in url_lower for team in MGM_MLB_TEAMS)
+        teams = self._LEAGUE_TEAMS.get(league)
+        if teams is None:
+            return False
+        return any(team in url_lower for team in teams)
 
     def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Split the MGM slug into (away, home) team tokens."""
@@ -216,13 +219,10 @@ class BetMGMEventScraper(BaseEventScraper):
             event_paths = sorted(set(h for h in hrefs if h and self.pattern_event_path.match(h)))
             event_urls = [self.base_domain + path for path in event_paths]
 
-            if league == League.NBA.value:
-                event_urls = [x for x in event_urls if self._is_nba_game(x)]
-            elif league == League.MLB.value:
-                event_urls = [x for x in event_urls if self._is_mlb_game(x)]
-            elif league == League.NFL.value:
-                event_urls = [x for x in event_urls if self._is_nfl_game(x)]
-            else:
+            # Filter URLs to only those matching the league's teams.
+            event_urls = [x for x in event_urls if self._is_league_game(x, league)]
+
+            if not event_urls and league not in self._LEAGUE_TEAMS:
                 raise ValueError(f"{self.__class__.__name__} - unsupported league: {league}")
 
             self.log.info("%s - found %d event URLs", self.__class__.__name__, len(event_urls))
