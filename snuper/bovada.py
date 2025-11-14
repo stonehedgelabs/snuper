@@ -199,10 +199,12 @@ class BovadaEventScraper(BaseEventScraper):
             end_of_day = start_of_day + dt.timedelta(days=1)
 
             for group in data:
-                for ev in group.get("events", []):
+                events = group.get("events", [])
+                self.log.info("%s - found %d events", self.__class__.__name__, len(events))
+                for ev in events:
                     if not is_league_matchup(ev.get("link"), context.league):
                         self.log.debug(
-                            "%s - Event %s is not a part of league %s",
+                            "%s - event %s is not a part of league %s",
                             self.__class__.__name__,
                             ev.get("link"),
                             context.league,
