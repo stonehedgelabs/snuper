@@ -121,10 +121,11 @@ class BaseMonitor:
 
         if now_local < local_start_time:
             self.log.info(
-                "%s - not starting monitor because %s start time %s (local timezone of start_time) has not started yet",
+                "%s - not starting monitor because %s start time %s (local timezone of %s) has not started yet",
                 self.__class__.__name__,
                 event,
-                local_start_time.isoformat(),
+                local_start_time,
+                self.local_tz,
             )
             return False
         return not event.is_finished()
