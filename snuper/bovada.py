@@ -173,6 +173,7 @@ class BovadaEventScraper(BaseEventScraper):
             output_dir=output_dir,
             input_dir=input_dir,
         )
+        self.log = configure_colored_logger(self.__class__.__name__, YELLOW)
 
     async def scrape_today(
         self,
@@ -183,9 +184,17 @@ class BovadaEventScraper(BaseEventScraper):
         # pylint: disable=too-many-nested-blocks
 
         def _inner() -> list[Event]:
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/123.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            }
             url = f"https://www.bovada.lv/services/sports/event/coupon/events/A/description/{context.sport}?marketFilterId=def&preMatchOnly=true&eventsLimit=50&lang=en"
             try:
-                response = httpx.get(url, headers=event_headers, timeout=20)
+                response = httpx.get(url, headers=headers, timeout=20)
                 response.raise_for_status()
                 data = response.json()
             except Exception as e:
@@ -200,7 +209,7 @@ class BovadaEventScraper(BaseEventScraper):
 
             for group in data:
                 events = group.get("events", [])
-                self.log.info("%s - found %d events", self.__class__.__name__, len(events))
+                self.log.debug("%s - found %d events", self.__class__.__name__, len(events))
                 for ev in events:
                     if not is_league_matchup(ev.get("link"), context.league):
                         self.log.debug(
@@ -216,7 +225,7 @@ class BovadaEventScraper(BaseEventScraper):
                         start_time_local = start_time.astimezone(self.local_tz)
 
                         if not start_of_day <= start_time_local < end_of_day:
-                            self.log.warning(
+                            self.log.debug(
                                 "%s - date condition *NOT* met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
                                 self.__class__.__name__,
                                 start_of_day,
@@ -225,7 +234,7 @@ class BovadaEventScraper(BaseEventScraper):
                             )
                             continue
 
-                        self.log.info(
+                        self.log.debug(
                             "%s - date condition met StartOfDay(%s) <= StartTime(%s) < EndOfDay(%s)",
                             self.__class__.__name__,
                             start_of_day,
@@ -310,7 +319,7 @@ class BovadaEventScraper(BaseEventScraper):
 
         # Bovada does this weird thing where sometimes the events endpoint returns the event timestamps in non-EST
         # format, but if you call the endpoint again, it'll return them in EST format. So account for that.
-        iters = 2
+        iters = 5
         results = []
         while iters and not results:
             results = _inner()

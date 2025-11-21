@@ -147,6 +147,10 @@ class BaseEventScraper(abc.ABC):
             try:
                 source_events = await self.load_source_events(context)
                 events = await self.scrape_today(context, source_events)
+                if not events:
+                    self.log.error(
+                        "%s - no %s events found for date %s", self.__class__.__name__, context.league, context.stamp
+                    )
             except Exception as exc:  # pragma: no cover - safety net for CLI usage
                 self.log.error("%s - failed to scrape %s: %s", self.__class__.__name__, league, exc)
                 continue

@@ -395,7 +395,7 @@ class DraftkingsEventScraper(BaseEventScraper):
         now = dt.datetime.now(self.local_tz)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + dt.timedelta(days=1)
-        logger.info(
+        self.log.info(
             "%s - using date info: Now(%s), StartOfDay(%s), EndOfDay(%s)",
             self.__class__.__name__,
             now,
@@ -428,7 +428,7 @@ class DraftkingsEventScraper(BaseEventScraper):
                 dt_local = dt_utc.astimezone(self.local_tz)
 
                 if not start_of_day <= dt_local < end_of_day:
-                    self.log.warning(
+                    self.log.debug(
                         "%s - date condition *NOT* met - StartOfDay(%s) <= Local(%s) < EndOfDay(%s)",
                         self.__class__.__name__,
                         start_of_day,
@@ -437,7 +437,7 @@ class DraftkingsEventScraper(BaseEventScraper):
                     )
                     continue
 
-                self.log.warning(
+                self.log.debug(
                     "%s - date condition met - StartOfDay(%s) <= Local(%s) < EndOfDay(%s)",
                     self.__class__.__name__,
                     start_of_day,

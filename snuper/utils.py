@@ -6,7 +6,7 @@ This module provides helper functions for:
 - Event data loading and serialization
 - Colored logging configuration
 - Duration and byte size formatting
-- Team name fuzzy matching for Sportdata and Rolling Insights APIs
+- Team name fuzzy matching for sportdata and Rolling Insights APIs
 """
 
 import datetime as dt
@@ -371,7 +371,9 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
             best_score = score
             best_abbrev = abbrev
 
-    if best_score >= 60:
+    logger.debug("_get_team_abbreviation_from_tokens: ", best_score, best_abbrev)
+
+    if best_score >= 55:
         return best_abbrev
 
     return None
@@ -379,10 +381,12 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
 
 def _match_sportdata_team_abbreviation(event_team_tokens: tuple[str, ...], api_abbreviation: str, league: str) -> bool:
     """
-    Match event team tokens to Sportdata team abbreviation.
+    Match event team tokens to sportdata team abbreviation.
     Returns True if the abbreviation matches.
     """
     expected_abbrev = _get_team_abbreviation_from_tokens(event_team_tokens, league)
+
+    logger.debug("_match_sportdata_team_abbreviation: ", expected_abbrev, api_abbreviation)
 
     return expected_abbrev is not None and expected_abbrev.upper() == api_abbreviation.upper()
 
@@ -466,6 +470,10 @@ def _fuzzy_match_team_name(event_team_tokens: tuple[str, ...], api_team_name: st
     for event_mascot in event_mascot_variants:
         score = rapidfuzz.fuzz.ratio(event_mascot, api_mascot_normalized)
         if score >= 60:
+            len_diff = abs(len(event_mascot) - len(api_mascot_normalized))
+            if len_diff >= 3:
+                continue
+
             return True
 
     return False
@@ -499,19 +507,12 @@ async def match_rollinginsight_game(event: Event) -> None:
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPError as e:
-            logger.error("Failed to fetch Rolling Insights schedule for event %s: %s", event.event_id, e)
-            raise RuntimeError("Failed to fetch Rolling Insights schedule: %s" % e) from e
+            sys.exit(f"Failed to fetch Rolling Insights schedule for event {event.event_id}: {e}")
         except Exception as e:
-            logger.error(
-                "Unexpected error while fetching Rolling Insights schedule for event %s: %s", event.event_id, e
-            )
-            raise RuntimeError("Failed to fetch Rolling Insights schedule: %s" % e) from e
+            sys.exit(f"Unexpected error while fetching Rolling Insights schedule for event {event.event_id}: {e}")
 
     if "data" not in data:
-        logger.error(
-            "Invalid response format from Rolling Insights API: missing 'data' key for event %s", event.event_id
-        )
-        raise ValueError("Invalid response format: missing 'data' key")
+        sys.exit(f"Invalid response format from Rolling Insights API: missing 'data' key for event {event.event_id}")
 
     league_data = data["data"].get(league_upper, [])
     if not league_data:
@@ -569,31 +570,14 @@ async def match_rollinginsight_game(event: Event) -> None:
             matches.append(game)
 
     if len(matches) == 0:
-        logger.warning(
-            "No matching RollingInsights %s game found for event %s (%s @ %s) on %s -- %s",
-            event.league,
-            event.event_id,
-            event.away,
-            event.home,
-            event_date,
-        )
         sys.exit(
-            "No matching RollingInsights game found for event %s (%s @ %s) on %s\n%s"
-            % (event.event_id, event.away, event.home, event_date, event.to_dict())
+            f"No matching RollingInsights {event.league} game found for event {event.event_id} "
+            f"({event.away} @ {event.home}) on {event_date}"
         )
     if len(matches) > 1:
-        logger.error(
-            "Multiple matching %s games found (%d) for event %s (%s @ %s) on %s",
-            event.league,
-            len(matches),
-            event.event_id,
-            event.away,
-            event.home,
-            event_date,
-        )
-        raise ValueError(
-            "Multiple matching %s games found (%d) for event %s (%s @ %s) on %s"
-            % (event.league, len(matches), event.event_id, event.away, event.home, event_date)
+        sys.exit(
+            f"Multiple matching RollingInsights {event.league} games found ({len(matches)}) for event {event.event_id} "
+            f"({event.away} @ {event.home}) on {event_date}"
         )
 
     event.set_rollinginsight_game(matches[0])
@@ -607,15 +591,13 @@ async def match_sportdata_game(event: Event) -> None:
     try:
         config = get_config()
     except RuntimeError:
-        logger.error("Configuration not loaded. Please provide --config argument.")
-        raise ValueError("Configuration must be loaded to match Sportdata games") from None
+        sys.exit("Configuration not loaded. Please provide --config argument.")
 
     try:
         season_info = config.seasons.get_season(event.league)
         season = season_info.regular
-    except KeyError as e:
-        logger.error("No season configuration found for league %s (event %s)", event.league, event.event_id)
-        raise ValueError(f"No season configuration found for league {event.league}") from e
+    except KeyError:
+        sys.exit(f"no season configuration found for league {event.league} (event {event.event_id})")
 
     local_tz = get_localzone()
     event_date = event.start_time.astimezone(local_tz).strftime("%Y-%m-%d")
@@ -630,20 +612,17 @@ async def match_sportdata_game(event: Event) -> None:
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPError as e:
-            logger.error("Failed to fetch Sportdata schedule for event %s: %s", event.event_id, e)
-            raise RuntimeError(f"Failed to fetch Sportdata schedule: {e}") from e
+            sys.exit(f"failed to fetch sportdata schedule for event {event.event_id}: {e}")
         except Exception as e:
-            logger.error("Unexpected error while fetching Sportdata schedule for event %s: %s", event.event_id, e)
-            raise RuntimeError(f"Failed to fetch Sportdata schedule: {e}") from e
+            sys.exit(f"unexpected error while fetching sportdata schedule for event {event.event_id}: {e}")
 
     if not isinstance(data, list):
-        logger.error("Invalid response format from Sportdata API: expected list for event %s", event.event_id)
-        raise ValueError("Invalid response format: expected list")
+        sys.exit(f"invalid response format from sportdata API: expected list for event {event.event_id}")
 
     matches = []
     scheduled_games_count = sum(1 for g in data if g.get("Status") == "Scheduled")
-    logger.info(
-        "Event %s: Searching %d scheduled games (out of %d total) for date %s",
+    logger.debug(
+        "event %s: searching %d scheduled games (out of %d total) for date %s",
         event.event_id,
         scheduled_games_count,
         len(data),
@@ -669,13 +648,9 @@ async def match_sportdata_game(event: Event) -> None:
                 game_dt = game_dt.replace(tzinfo=dt.timezone.utc)
             game_local = game_dt.astimezone(local_tz)
         except Exception as e:
-            logger.warning(
-                "Failed to parse game date for Sportdata game in league %s (event %s): %s",
-                league_lower,
-                event.event_id,
-                e,
+            sys.exit(
+                f"failed to parse game date for sportdata game in league {league_lower} (event {event.event_id}): {e}"
             )
-            continue
 
         if not start_of_day <= game_local < end_of_day:
             continue
@@ -690,32 +665,14 @@ async def match_sportdata_game(event: Event) -> None:
             matches.append(game)
 
     if len(matches) == 0:
-        logger.error(
-            "No matching Sportdata %s game found for event %s (%s @ %s) on %s",
-            event.league,
-            event.event_id,
-            event.away,
-            event.home,
-            event_date,
-        )
         sys.exit(
-            "No matching Sportdata %s game found for event %s (%s @ %s) on %s"
-            % (event.league, event.event_id, event.away, event.home, event_date)
+            f"no matching sportdata {event.league} game found for event {event.event_id} "
+            f"({event.away} @ {event.home}) on {event_date}"
         )
 
     if len(matches) > 1:
-        logger.error(
-            "Multiple matching %s games found (%d) for event %s (%s @ %s) on %s",
-            event.league,
-            len(matches),
-            event.event_id,
-            event.away,
-            event.home,
-            event_date,
+        sys.exit(
+            f"multiple matching sportdata {event.league} games found ({len(matches)}) for event {event.event_id} "
+            f"({event.away} @ {event.home}) on {event_date}"
         )
-        raise ValueError(
-            "Multiple matching %s games found (%d) for event %s (%s @ %s) on %s"
-            % (event.league, len(matches), event.event_id, event.away, event.home, event_date)
-        )
-
     event.sportdata_game = matches[0]
