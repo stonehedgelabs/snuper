@@ -374,6 +374,7 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
     logger.debug("_get_team_abbreviation_from_tokens: ", best_score, best_abbrev)
 
     if best_score >= 55:
+        # print(best_score, best_abbrev, event_team_tokens)
         return best_abbrev
 
     return None
@@ -387,6 +388,8 @@ def _match_sportdata_team_abbreviation(event_team_tokens: tuple[str, ...], api_a
     expected_abbrev = _get_team_abbreviation_from_tokens(event_team_tokens, league)
 
     logger.debug("_match_sportdata_team_abbreviation: ", expected_abbrev, api_abbreviation)
+
+    # print(expected_abbrev, api_abbreviation)
 
     return expected_abbrev is not None and expected_abbrev.upper() == api_abbreviation.upper()
 
@@ -634,7 +637,7 @@ async def match_sportdata_game(event: Event) -> None:
     end_of_day = start_of_day + dt.timedelta(days=1)
 
     # Team abbreviation remappings - defined once outside loop for efficiency.
-    remappings = {"NO": "NOP", "SA": "SAS", "NY": "NYK", "GS": "GSW", "PHO": "PHX"}
+    nba_remappings = {"NO": "NOP", "SA": "SAS", "NY": "NYK", "GS": "GSW", "PHO": "PHX"}
 
     for game in data:
         status = game.get("Status")
@@ -655,8 +658,11 @@ async def match_sportdata_game(event: Event) -> None:
         if not start_of_day <= game_local < end_of_day:
             continue
 
-        home_team_abbrev = remappings.get(game["HomeTeam"], game["HomeTeam"])
-        away_team_abbrev = remappings.get(game["AwayTeam"], game["AwayTeam"])
+        home_team_abbrev = game["HomeTeam"]
+        away_team_abbrev = game["AwayTeam"]
+        if league_lower == League.NBA.value:
+            home_team_abbrev = nba_remappings.get(game["HomeTeam"], game["HomeTeam"])
+            away_team_abbrev = nba_remappings.get(game["AwayTeam"], game["AwayTeam"])
 
         home_matches = _match_sportdata_team_abbreviation(event.home, home_team_abbrev, event.league)
         away_matches = _match_sportdata_team_abbreviation(event.away, away_team_abbrev, event.league)

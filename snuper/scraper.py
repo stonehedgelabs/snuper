@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import datetime as dt
 import json
+import sys
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -161,7 +162,7 @@ class BaseEventScraper(abc.ABC):
             # batch-fetch schedules once per league and pass them to match functions.
             if merge_sportdata_games:
                 self.log.info(
-                    "%s - matching Sportdata games for %d %s events", self.__class__.__name__, len(events), league
+                    "%s - matching sportdata games for %d %s events", self.__class__.__name__, len(events), league
                 )
                 matched_count = 0
                 for event in events:
@@ -170,22 +171,27 @@ class BaseEventScraper(abc.ABC):
                         matched_count += 1
                     except Exception as exc:
                         self.log.warning(
-                            "%s - failed to match Sportdata %s game for event %s: %s",
+                            "%s - failed to match sportdata %s game for event %s: %s",
                             self.__class__.__name__,
                             league,
                             event.event_id,
                             exc,
                         )
+
+                if matched_count != len(events):
+                    sys.exit(f"%s only matched {matched_count}/{len(events)} sportdata games for league {league}.")
+
                 self.log.info(
-                    "%s - successfully matched %d/%d %s events to Sportdata games",
+                    "%s - successfully matched %d/%d %s events to sportdata games",
                     self.__class__.__name__,
                     matched_count,
                     len(events),
                     league,
                 )
+
             if merge_rollinginsights_games:
                 self.log.info(
-                    "%s - matching Rolling Insights games for %d %s events in %s",
+                    "%s - matching rolling insights games for %d %s events in %s",
                     self.__class__.__name__,
                     len(events),
                     league,
@@ -198,14 +204,20 @@ class BaseEventScraper(abc.ABC):
                         matched_count += 1
                     except Exception as exc:
                         self.log.warning(
-                            "%s - failed to match Rolling Insights game for %s event %s: %s",
+                            "%s - failed to match rolling insights game for %s event %s: %s",
                             self.__class__.__name__,
                             league,
                             event.event_id,
                             exc,
                         )
+
+                if matched_count != len(events):
+                    sys.exit(
+                        f"%s only matched {matched_count}/{len(events)} rolling insights games for league {league}."
+                    )
+
                 self.log.info(
-                    "%s - successfully matched %d/%d %s events to Rolling Insights games",
+                    "%s - successfully matched %d/%d %s events to rolling insights games",
                     self.__class__.__name__,
                     matched_count,
                     len(events),
