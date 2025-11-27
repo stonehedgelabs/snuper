@@ -173,7 +173,6 @@ class BovadaEventScraper(BaseEventScraper):
             output_dir=output_dir,
             input_dir=input_dir,
         )
-        self.log = configure_colored_logger(self.__class__.__name__, YELLOW)
 
     async def scrape_today(
         self,
