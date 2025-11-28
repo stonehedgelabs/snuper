@@ -371,7 +371,7 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
             best_score = score
             best_abbrev = abbrev
 
-    logger.debug("_get_team_abbreviation_from_tokens: ", best_score, best_abbrev)
+    logger.debug("_get_team_abbreviation_from_tokens: %s %s", best_score, best_abbrev)
 
     if best_score >= 55:
         # print(best_score, best_abbrev, event_team_tokens)
