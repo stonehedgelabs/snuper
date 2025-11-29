@@ -40,10 +40,12 @@ disable=
     C0301,  # 120 width is ok
     C0209,  # fstrings are visually unappealing
     R1714,  # why construct a set vs a constant comparison?
+    W0719,  # see W0703
+    W0707,  # idk
+    R0912,  # idk
 
 # Enable a few important modern warnings
 enable=
-    W0707,  # raise-missing-from
     W1514,  # unspecified-encoding
     E1136,  # unsubscriptable-object
     E1128,  # assignment-from-none

@@ -412,6 +412,7 @@ class DraftkingsEventScraper(BaseEventScraper):
             await page.wait_for_timeout(4000)
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
             await browser.close()
+
         event_urls = sorted(set(h for h in hrefs if self.pattern_event_url.match(h)))
         self.log.info("%s - found %d event URLs. Fetching metadata...", self.__class__.__name__, len(event_urls))
 
