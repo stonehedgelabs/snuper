@@ -9,10 +9,10 @@ This module provides helper functions for:
 - Team name fuzzy matching for sportdata and Rolling Insights APIs
 """
 
+import asyncio
 import datetime as dt
 import json
 import logging
-import sys
 import os
 import re
 from pathlib import Path
@@ -387,7 +387,7 @@ def _match_sportdata_team_abbreviation(event_team_tokens: tuple[str, ...], api_a
     """
     expected_abbrev = _get_team_abbreviation_from_tokens(event_team_tokens, league)
 
-    logger.debug("_match_sportdata_team_abbreviation: ", expected_abbrev, api_abbreviation)
+    logger.debug("_match_sportdata_team_abbreviation: %s %s", expected_abbrev, api_abbreviation)
 
     # print(expected_abbrev, api_abbreviation)
 
@@ -482,47 +482,143 @@ def _fuzzy_match_team_name(event_team_tokens: tuple[str, ...], api_team_name: st
     return False
 
 
-async def match_rollinginsight_game(event: Event) -> None:
+async def fetch_rollinginsights_schedule(league: str, max_retries: int = 3) -> dict[str, dict[str, list[dict]]]:
     """
-    Fetch Rolling Insights schedule and match the event to a game.
-    Sets event.rollinginsight_game to the matched game dict.
-    Raises an error if zero or multiple matches are found.
+    Fetch Rolling Insights schedule for a league and date with retry logic.
+    Returns the full API response data dict with structure: {"data": {"LEAGUE": [games...]}}.
     """
-
     rsc_token = os.environ["ROLLING_INSIGHTS_CLIENT_SECRET"]
 
     local_tz = get_localzone()
-    logger.info("RollingInsights matcher using local timezone: %s", local_tz)
     today_local = dt.datetime.now(local_tz).date()
     current_date = today_local.strftime("%Y-%m-%d")
 
+    league_upper = league.upper()
+
+    base_url = "https://rest.datafeeds.rolling-insights.com/api/v1"
+    url = f"{base_url}/schedule/{current_date}/{league_upper}?RSC_token={rsc_token}"
+
+    # Add headers to prevent caching and force fresh response
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                logger.info(
+                    "Fetching Rolling Insights schedule for %s (attempt %d/%d): %s",
+                    league,
+                    attempt + 1,
+                    max_retries,
+                    url.replace(rsc_token, "***"),
+                )
+                response = await client.get(url, headers=headers)
+
+                # Handle 304 Not Modified (shouldn't happen with our headers, but just in case)
+                if response.status_code == 304:
+                    logger.error(
+                        "Failed to fetch Rolling Insights schedule for %s: "
+                        "Server returned 304 Not Modified despite cache-busting headers. "
+                        "This indicates a server-side caching issue. URL: %s",
+                        league,
+                        url.replace(rsc_token, "***"),
+                    )
+                    raise Exception(f"Server returned 304 Not Modified for {league}")
+
+                # Now check for errors (4xx, 5xx)
+                response.raise_for_status()
+                data = response.json()
+
+                if "data" not in data:
+                    logger.error(
+                        "Invalid response format from Rolling Insights API: missing 'data' key for league %s",
+                        league,
+                    )
+                    raise Exception(f"Invalid response format for {league}")
+
+                logger.info("Successfully fetched Rolling Insights schedule for %s", league)
+                return data
+
+        except httpx.ReadTimeout:
+            if attempt < max_retries - 1:
+                wait_time = 2**attempt
+                logger.warning(
+                    "ReadTimeout fetching Rolling Insights schedule for %s (attempt %d/%d). "
+                    "Server took longer than 60s to respond. Retrying in %ds...",
+                    league,
+                    attempt + 1,
+                    max_retries,
+                    wait_time,
+                )
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(
+                    "Failed to fetch Rolling Insights schedule for %s after %d attempts: "
+                    "Server consistently timing out (>60s). URL: %s",
+                    league,
+                    max_retries,
+                    url.replace(rsc_token, "***"),
+                )
+                raise Exception(f"ReadTimeout for {league} after {max_retries} attempts")
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Failed to fetch Rolling Insights schedule for %s: HTTP %d - %s. URL: %s",
+                league,
+                e.response.status_code,
+                e.response.text,
+                url.replace(rsc_token, "***"),
+            )
+            raise Exception(f"HTTP {e.response.status_code} for {league}") from e
+        except httpx.HTTPError as e:
+            logger.error(
+                "Failed to fetch Rolling Insights schedule for %s: Network error: %s: %s. URL: %s",
+                league,
+                type(e).__name__,
+                e,
+                url.replace(rsc_token, "***"),
+            )
+            raise Exception(f"Network error for {league}: {type(e).__name__}") from e
+        except Exception as e:
+            logger.error(
+                "Unexpected error while fetching Rolling Insights schedule for %s: %s: %s. URL: %s",
+                league,
+                type(e).__name__,
+                e,
+                url.replace(rsc_token, "***"),
+            )
+            raise
+
+    # Should never reach here
+    logger.error("Failed to fetch Rolling Insights schedule for %s after %d attempts", league, max_retries)
+    raise Exception(f"Failed after {max_retries} attempts for {league}")
+
+
+async def match_rollinginsight_game(event: Event, schedule_data: dict[str, dict[str, list[dict]]]) -> None:
+    """
+    Match the event to a game from the provided Rolling Insights schedule data.
+    Sets event.rollinginsight_game to the matched game dict.
+    Raises an error if zero or multiple matches are found.
+
+    Args:
+        event: The event to match
+        schedule_data: API response with structure {"data": {"LEAGUE": [games...]}}
+    """
+
+    local_tz = get_localzone()
     event_start_local = event.start_time.astimezone(local_tz)
     event_date = event_start_local.strftime("%Y-%m-%d")
 
     league_upper = event.league.upper()
 
-    base_url = "https://rest.datafeeds.rolling-insights.com/api/v1"
-    url = f"{base_url}/schedule/{current_date}/{league_upper}?RSC_token={rsc_token}"
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.json()
-        except httpx.HTTPError as e:
-            sys.exit(f"Failed to fetch Rolling Insights schedule for event {event.event_id}: {e}")
-        except Exception as e:
-            sys.exit(f"Unexpected error while fetching Rolling Insights schedule for event {event.event_id}: {e}")
-
-    if "data" not in data:
-        sys.exit(f"Invalid response format from Rolling Insights API: missing 'data' key for event {event.event_id}")
-
-    league_data = data["data"].get(league_upper, [])
+    league_data = schedule_data["data"].get(league_upper, [])
     if not league_data:
         logger.warning(
             "No league data found for %s on %s (event %s: %s @ %s)",
             league_upper,
-            current_date,
+            event_date,
             event.event_id,
             event.away,
             event.home,
@@ -573,15 +669,26 @@ async def match_rollinginsight_game(event: Event) -> None:
             matches.append(game)
 
     if len(matches) == 0:
-        sys.exit(
-            f"No matching RollingInsights {event.league} game found for event {event.event_id} "
-            f"({event.away} @ {event.home}) on {event_date}"
+        logger.error(
+            "No matching RollingInsights %s game found for event %s (%s @ %s) on %s",
+            event.league,
+            event.event_id,
+            event.away,
+            event.home,
+            event_date,
         )
+        raise Exception(f"No matching RollingInsights game for event {event.event_id}")
     if len(matches) > 1:
-        sys.exit(
-            f"Multiple matching RollingInsights {event.league} games found ({len(matches)}) for event {event.event_id} "
-            f"({event.away} @ {event.home}) on {event_date}"
+        logger.error(
+            "Multiple matching RollingInsights %s games found (%d) for event %s (%s @ %s) on %s",
+            event.league,
+            len(matches),
+            event.event_id,
+            event.away,
+            event.home,
+            event_date,
         )
+        raise Exception(f"Multiple matching RollingInsights games ({len(matches)}) for event {event.event_id}")
 
     event.set_rollinginsight_game(matches[0])
 
@@ -594,13 +701,15 @@ async def match_sportdata_game(event: Event) -> None:
     try:
         config = get_config()
     except RuntimeError:
-        sys.exit("Configuration not loaded. Please provide --config argument.")
+        logger.error("Configuration not loaded. Please provide --config argument.")
+        raise Exception("Configuration not loaded")
 
     try:
         season_info = config.seasons.get_season(event.league)
         season = season_info.regular
     except KeyError:
-        sys.exit(f"no season configuration found for league {event.league} (event {event.event_id})")
+        logger.error("No season configuration found for league %s (event %s)", event.league, event.event_id)
+        raise Exception(f"No season config for {event.league}")
 
     local_tz = get_localzone()
     event_date = event.start_time.astimezone(local_tz).strftime("%Y-%m-%d")
@@ -615,12 +724,15 @@ async def match_sportdata_game(event: Event) -> None:
             response.raise_for_status()
             data = response.json()
         except httpx.HTTPError as e:
-            sys.exit(f"failed to fetch sportdata schedule for event {event.event_id}: {e}")
+            logger.error("Failed to fetch sportdata schedule for event %s: %s", event.event_id, e)
+            raise Exception(f"Failed to fetch sportdata schedule for event {event.event_id}") from e
         except Exception as e:
-            sys.exit(f"unexpected error while fetching sportdata schedule for event {event.event_id}: {e}")
+            logger.error("Unexpected error while fetching sportdata schedule for event %s: %s", event.event_id, e)
+            raise
 
     if not isinstance(data, list):
-        sys.exit(f"invalid response format from sportdata API: expected list for event {event.event_id}")
+        logger.error("Invalid response format from sportdata API: expected list for event %s", event.event_id)
+        raise Exception(f"Invalid sportdata response format for event {event.event_id}")
 
     matches = []
     scheduled_games_count = sum(1 for g in data if g.get("Status") == "Scheduled")
@@ -651,9 +763,13 @@ async def match_sportdata_game(event: Event) -> None:
                 game_dt = game_dt.replace(tzinfo=dt.timezone.utc)
             game_local = game_dt.astimezone(local_tz)
         except Exception as e:
-            sys.exit(
-                f"failed to parse game date for sportdata game in league {league_lower} (event {event.event_id}): {e}"
+            logger.error(
+                "Failed to parse game date for sportdata game in league %s (event %s): %s",
+                league_lower,
+                event.event_id,
+                e,
             )
+            raise Exception(f"Failed to parse sportdata game date for event {event.event_id}") from e
 
         if not start_of_day <= game_local < end_of_day:
             continue
@@ -671,14 +787,26 @@ async def match_sportdata_game(event: Event) -> None:
             matches.append(game)
 
     if len(matches) == 0:
-        sys.exit(
-            f"no matching sportdata {event.league} game found for event {event.event_id} "
-            f"({event.away} @ {event.home}) on {event_date}"
+        logger.error(
+            "No matching sportdata %s game found for event %s (%s @ %s) on %s",
+            event.league,
+            event.event_id,
+            event.away,
+            event.home,
+            event_date,
         )
+        raise Exception(f"No matching sportdata game for event {event.event_id}")
 
     if len(matches) > 1:
-        sys.exit(
-            f"multiple matching sportdata {event.league} games found ({len(matches)}) for event {event.event_id} "
-            f"({event.away} @ {event.home}) on {event_date}"
+        logger.error(
+            "Multiple matching sportdata %s games found (%d) for event %s (%s @ %s) on %s",
+            event.league,
+            len(matches),
+            event.event_id,
+            event.away,
+            event.home,
+            event_date,
         )
+        raise Exception(f"Multiple matching sportdata games ({len(matches)}) for event {event.event_id}")
+
     event.sportdata_game = matches[0]

@@ -13,7 +13,13 @@ from typing import Any
 from tzlocal import get_localzone
 
 from snuper.constants import SPORTS
-from snuper.utils import current_stamp, event_filepath, match_sportdata_game, match_rollinginsight_game
+from snuper.utils import (
+    current_stamp,
+    event_filepath,
+    match_sportdata_game,
+    match_rollinginsight_game,
+    fetch_rollinginsights_schedule,
+)
 from snuper.t import Event
 from snuper.sinks import SelectionSink
 
@@ -191,38 +197,58 @@ class BaseEventScraper(abc.ABC):
 
             if merge_rollinginsights_games:
                 self.log.info(
-                    "%s - matching rolling insights games for %d %s events in %s",
+                    "%s - fetching rolling insights schedule for %s",
                     self.__class__.__name__,
-                    len(events),
-                    league,
                     league,
                 )
-                matched_count = 0
-                for event in events:
-                    try:
-                        await match_rollinginsight_game(event)
-                        matched_count += 1
-                    except Exception as exc:
-                        self.log.warning(
-                            "%s - failed to match rolling insights game for %s event %s: %s",
-                            self.__class__.__name__,
-                            league,
-                            event.event_id,
-                            exc,
-                        )
-
-                if matched_count != len(events):
-                    sys.exit(
-                        f"%s only matched {matched_count}/{len(events)} rolling insights games for league {league}."
+                try:
+                    schedule_data = await fetch_rollinginsights_schedule(league)
+                except Exception as exc:
+                    self.log.error(
+                        "%s - failed to fetch rolling insights schedule for %s: %s. Skipping rolling insights matching.",
+                        self.__class__.__name__,
+                        league,
+                        exc,
                     )
+                    schedule_data = None
 
-                self.log.info(
-                    "%s - successfully matched %d/%d %s events to rolling insights games",
-                    self.__class__.__name__,
-                    matched_count,
-                    len(events),
-                    league,
-                )
+                if schedule_data:
+                    self.log.info(
+                        "%s - matching rolling insights games for %d %s events",
+                        self.__class__.__name__,
+                        len(events),
+                        league,
+                    )
+                    matched_count = 0
+                    for event in events:
+                        try:
+                            await match_rollinginsight_game(event, schedule_data)
+                            matched_count += 1
+                        except Exception as exc:
+                            self.log.warning(
+                                "%s - failed to match rolling insights game for %s event %s: %s",
+                                self.__class__.__name__,
+                                league,
+                                event.event_id,
+                                exc,
+                            )
+
+                    if matched_count != len(events):
+                        self.log.error(
+                            "%s only matched %d/%d rolling insights games for league %s. Continuing anyway.",
+                            self.__class__.__name__,
+                            matched_count,
+                            len(events),
+                            league,
+                        )
+                    else:
+                        self.log.info(
+                            "%s - successfully matched %d/%d %s events to rolling insights games",
+                            self.__class__.__name__,
+                            matched_count,
+                            len(events),
+                            league,
+                        )
 
             saved: Path | None = None
             if sink and provider:
