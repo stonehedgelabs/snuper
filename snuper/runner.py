@@ -86,6 +86,7 @@ class BaseMonitor:
         leagues: Sequence[str] | None = None,
         provider: str,
         sink: SelectionSink,
+        monitor_interval: int | None = None,
     ) -> None:
         """Store directory paths, runner instance, sink, and concurrency policy."""
 
@@ -103,6 +104,8 @@ class BaseMonitor:
         self.provider = provider
         self.sink = sink
         self.local_tz = get_localzone()
+        self.monitor_interval = monitor_interval
+        self._zero_games_counters: dict[str, int] = {}
 
     def event_key(self, event: Event) -> str:
         """Build a unique key used to track active runner tasks."""
@@ -216,8 +219,40 @@ class BaseMonitor:
                 league,
                 len(live_events),
             )
+
+            # Track zero-games counters for EOD detection
+            if len(live_events) == 0:
+                self._zero_games_counters[league] = self._zero_games_counters.get(league, 0) + 1
+            else:
+                self._zero_games_counters[league] = 0
+
             for event in live_events:
                 to_start.append((league, event))
 
         await self._prune_tasks(active_map)
         await self._start_tasks(to_start)
+
+    def should_terminate_eod(self) -> bool:
+        """Check if all monitored leagues have had 0 live games for enough consecutive checks.
+
+        Returns True if monitor_interval is set and all leagues have been at 0 live games
+        for at least (monitor_interval / 60) consecutive checks, indicating EOD.
+        """
+        if not self.monitor_interval:
+            return False
+
+        if not self._zero_games_counters:
+            return False
+
+        threshold = self.monitor_interval / 60
+        for _, count in self._zero_games_counters.items():
+            if count < threshold:
+                return False
+
+        self.log.info(
+            "%s - all leagues have 0 live games for %d consecutive checks (threshold: %.1f), terminating monitor (EOD)",
+            self.__class__.__name__,
+            min(self._zero_games_counters.values()),
+            threshold,
+        )
+        return True

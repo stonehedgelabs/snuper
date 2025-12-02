@@ -630,6 +630,7 @@ class BetMGMMonitor(BaseMonitor):
         sink: SelectionSink,
         provider: str,
         output_dir: pathlib.Path | None = None,
+        monitor_interval: int | None = None,
     ) -> None:
         """Initialise monitor state with snapshot directory and policy."""
         super().__init__(
@@ -641,6 +642,7 @@ class BetMGMMonitor(BaseMonitor):
             sink=sink,
             provider=provider,
             output_dir=output_dir,
+            monitor_interval=monitor_interval,
         )
         self.log.info("%s - monitor using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -685,12 +687,15 @@ async def run_monitor(
         sink=sink,
         provider=provider,
         output_dir=output_dir,
+        monitor_interval=interval,
     )
     logger.info("starting BetMGM monitor loop (interval=%ss)...", interval)
 
     while True:
         try:
             await monitor.run_once()
+            if monitor.should_terminate_eod():
+                break
         except Exception as exc:  # pragma: no cover - guard for runtime errors
             logger.error("monitor sweep failed: %s", exc)
         logger.info("sleeping %ss before next sweep...", interval)

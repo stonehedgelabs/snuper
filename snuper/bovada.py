@@ -598,6 +598,7 @@ class BovadaMonitor(BaseMonitor):
         sink: SelectionSink,
         provider: str,
         output_dir: Path | None = None,
+        monitor_interval: int | None = None,
     ) -> None:
         super().__init__(
             input_dir,
@@ -608,6 +609,7 @@ class BovadaMonitor(BaseMonitor):
             sink=sink,
             provider=provider,
             output_dir=output_dir,
+            monitor_interval=monitor_interval,
         )
         self.log.info("%s - using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -652,12 +654,15 @@ async def run_monitor(
         sink=sink,
         provider=provider,
         output_dir=output_dir,
+        monitor_interval=interval,
     )
     logger.info("starting Bovada monitor loop (interval=%ss)...", interval)
 
     while True:
         try:
             await monitor.run_once()
+            if monitor.should_terminate_eod():
+                break
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.error("Bovada monitor sweep failed: %s", exc)
         await asyncio.sleep(interval)

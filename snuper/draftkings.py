@@ -725,6 +725,7 @@ class DraftKingsMonitor(BaseMonitor):
         sink: SelectionSink,
         provider: str,
         output_dir: pathlib.Path | None = None,
+        monitor_interval: int | None = None,
     ) -> None:
         """Initialise the monitor with the target snapshot directory."""
         super().__init__(
@@ -736,6 +737,7 @@ class DraftKingsMonitor(BaseMonitor):
             provider=provider,
             sink=sink,
             output_dir=output_dir,
+            monitor_interval=monitor_interval,
         )
         self.log.info("%s - using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -780,11 +782,14 @@ async def run_monitor(
         sink=sink,
         provider=provider,
         output_dir=output_dir,
+        monitor_interval=interval,
     )
     logger.info("Starting persistent monitor (interval=%ss)...", interval)
     while True:
         try:
             await monitor.run_once()
+            if monitor.should_terminate_eod():
+                break
         except Exception as exc:
             logger.error("Cycle error: %s", exc)
         logger.info("Sleeping %ss before next cycle...", interval)
