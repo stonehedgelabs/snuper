@@ -409,7 +409,41 @@ class DraftkingsEventScraper(BaseEventScraper):
             context = await browser.new_context(locale="en-US")
             page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(4000)
+
+            # Wait for event links to stabilize instead of fixed timeout
+            # DraftKings loads events asynchronously, so we need to wait for the count to stabilize
+            prev_count = 0
+            stable_count = 0
+            max_attempts = 10
+
+            for attempt in range(max_attempts):
+                await page.wait_for_timeout(1000)  # Wait 1 second between checks
+                hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
+                event_urls = [h for h in hrefs if self.pattern_event_url.match(h)]
+                current_count = len(set(event_urls))
+
+                if current_count == prev_count:
+                    stable_count += 1
+                    if stable_count >= 3:  # Count stable for 3 consecutive checks (3 seconds)
+                        self.log.info(
+                            "%s - event count stabilized at %d after %d attempts",
+                            self.__class__.__name__,
+                            current_count,
+                            attempt + 1,
+                        )
+                        break
+                else:
+                    stable_count = 0
+                    prev_count = current_count
+                    self.log.debug(
+                        "%s - found %d event URLs (attempt %d/%d), waiting for more...",
+                        self.__class__.__name__,
+                        current_count,
+                        attempt + 1,
+                        max_attempts,
+                    )
+
+            # Final scrape after stabilization
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
             await browser.close()
 
