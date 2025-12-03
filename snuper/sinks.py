@@ -420,7 +420,15 @@ class RdsSelectionSink(BaseSink):
         if create_engine is None or MetaData is None or JSON is None or func is None:
             msg = "sqlalchemy must be installed to use the RDS sink"
             raise RuntimeError(msg)
-        self._engine = create_engine(uri, future=True)
+        # Configure connection pool to handle long-running tasks and idle timeouts
+        self._engine = create_engine(
+            uri,
+            future=True,
+            pool_pre_ping=True,  # Verify connections before using them
+            pool_recycle=3600,  # Recycle connections after 1 hour
+            pool_size=5,  # Maintain 5 connections in the pool
+            max_overflow=10,  # Allow up to 15 total connections
+        )
         self._table_name = table_name
         self._selection_table_name = selection_table_name or table_name
         self._metadata = MetaData()
@@ -548,10 +556,37 @@ class RdsSelectionSink(BaseSink):
                 )
                 conn.execute(stmt)
 
-        try:
-            await asyncio.to_thread(_insert)
-        except SQLAlchemyError as exc:  # pragma: no cover - database failure guard
-            logger.warning("rds sink failed for %s/%s: %s", league, event.event_id, exc)
+        # Retry logic for transient connection errors
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                await asyncio.to_thread(_insert)
+                break  # Success, exit retry loop
+            except SQLAlchemyError as exc:  # pragma: no cover - database failure guard
+                error_msg = str(exc)
+                is_connection_error = any(
+                    phrase in error_msg.lower()
+                    for phrase in [
+                        "server closed the connection",
+                        "connection was closed",
+                        "connection refused",
+                        "connection timeout",
+                        "could not connect",
+                    ]
+                )
+                if is_connection_error and attempt < max_retries:
+                    logger.warning(
+                        "rds sink connection error for %s/%s (attempt %d/%d): %s. Retrying...",
+                        league,
+                        event.event_id,
+                        attempt,
+                        max_retries,
+                        exc,
+                    )
+                    await asyncio.sleep(2 ** (attempt - 1))  # Exponential backoff: 1s, 2s, 4s
+                else:
+                    logger.warning("rds sink failed for %s/%s: %s", league, event.event_id, exc)
+                    break  # Non-retryable error or max retries reached
 
     async def save_snapshot(
         self,
@@ -608,17 +643,44 @@ class RdsSelectionSink(BaseSink):
                 else:
                     conn.execute(self._table.insert(), rows)
 
-        try:
-            await asyncio.to_thread(_insert_snapshot)
-            logger.info(
-                "rds sink - persisted %d events for %s/%s to table %s",
-                len(rows),
-                provider,
-                league,
-                self._table_name,
-            )
-        except SQLAlchemyError as exc:  # pragma: no cover - database failure guard
-            logger.warning("rds sink failed to save snapshot for %s/%s: %s", provider, league, exc)
+        # Retry logic for transient connection errors
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                await asyncio.to_thread(_insert_snapshot)
+                logger.info(
+                    "rds sink - persisted %d events for %s/%s to table %s",
+                    len(rows),
+                    provider,
+                    league,
+                    self._table_name,
+                )
+                break  # Success, exit retry loop
+            except SQLAlchemyError as exc:  # pragma: no cover - database failure guard
+                error_msg = str(exc)
+                is_connection_error = any(
+                    phrase in error_msg.lower()
+                    for phrase in [
+                        "server closed the connection",
+                        "connection was closed",
+                        "connection refused",
+                        "connection timeout",
+                        "could not connect",
+                    ]
+                )
+                if is_connection_error and attempt < max_retries:
+                    logger.warning(
+                        "rds sink connection error for %s/%s (attempt %d/%d): %s. Retrying...",
+                        provider,
+                        league,
+                        attempt,
+                        max_retries,
+                        exc,
+                    )
+                    await asyncio.sleep(2 ** (attempt - 1))  # Exponential backoff: 1s, 2s, 4s
+                else:
+                    logger.warning("rds sink failed to save snapshot for %s/%s: %s", provider, league, exc)
+                    break  # Non-retryable error or max retries reached
         return None
 
     async def load_snapshots(
