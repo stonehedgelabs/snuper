@@ -236,7 +236,7 @@ class BaseMonitor:
         """Check if all monitored leagues have had 0 live games for enough consecutive checks.
 
         Returns True if monitor_interval is set and all leagues have been at 0 live games
-        for at least (monitor_interval / 60) consecutive checks, indicating EOD.
+        for at least 60 minutes (3600 seconds / monitor_interval checks), indicating EOD.
         """
         if not self.monitor_interval:
             return False
@@ -244,13 +244,15 @@ class BaseMonitor:
         if not self._zero_games_counters:
             return False
 
-        threshold = self.monitor_interval / 60
+        # Calculate how many checks = 60 minutes
+        # E.g., if monitor_interval=30s, threshold=120 checks (120*30s = 3600s = 60min)
+        threshold = 3600 / self.monitor_interval
         for _, count in self._zero_games_counters.items():
             if count < threshold:
                 return False
 
         self.log.info(
-            "%s - all leagues have 0 live games for %d consecutive checks (threshold: %.1f), terminating monitor (EOD)",
+            "%s - all leagues have 0 live games for %d consecutive checks (threshold: %.1f = 60 minutes), terminating monitor (EOD)",
             self.__class__.__name__,
             min(self._zero_games_counters.values()),
             threshold,
