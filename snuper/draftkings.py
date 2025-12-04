@@ -456,8 +456,26 @@ class DraftkingsEventScraper(BaseEventScraper):
                 r = httpx.get(event_url, headers=headers, timeout=10)
                 match = self.pattern_date.search(r.text)
                 if not match:
-                    self.log.warning("%s - no date pattern match found for %s", self.__class__.__name__, event_url)
-                    continue
+                    # Fallback: use Playwright to fetch with JavaScript execution
+                    self.log.info(
+                        "%s - date not in HTML for %s, fetching with browser (JavaScript)",
+                        self.__class__.__name__,
+                        event_url,
+                    )
+                    async with async_playwright() as p:
+                        browser = await p.chromium.launch(headless=True)
+                        ctx = await browser.new_context(locale="en-US")
+                        page = await ctx.new_page()
+                        await page.goto(event_url, wait_until="domcontentloaded", timeout=30000)
+                        await page.wait_for_timeout(2000)  # Give JavaScript time to render
+                        html = await page.content()
+                        await browser.close()
+                        match = self.pattern_date.search(html)
+                        if not match:
+                            self.log.warning(
+                                "%s - no date found even with browser for %s", self.__class__.__name__, event_url
+                            )
+                            continue
                 utc_str = match.group(1)
                 dt_utc = dt.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
                 dt_local = dt_utc.astimezone(self.local_tz)
