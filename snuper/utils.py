@@ -517,16 +517,30 @@ async def fetch_rollinginsights_schedule(league: str, max_retries: int = 3) -> d
                 )
                 response = await client.get(url, headers=headers)
 
-                # Handle 304 Not Modified (shouldn't happen with our headers, but just in case)
+                # Handle 304 Not Modified by retrying with exponential backoff
+                # 304 means "not modified" but we don't have a cache, so we retry to force a fresh response
                 if response.status_code == 304:
-                    logger.error(
-                        "Failed to fetch Rolling Insights schedule for %s: "
-                        "Server returned 304 Not Modified despite cache-busting headers. "
-                        "This indicates a server-side caching issue. URL: %s",
-                        league,
-                        url.replace(rsc_token, "***"),
-                    )
-                    raise Exception(f"Server returned 304 Not Modified for {league}")
+                    if attempt < max_retries - 1:
+                        wait_time = 2**attempt
+                        logger.warning(
+                            "Server returned 304 Not Modified for %s despite cache-busting headers. "
+                            "Retrying in %ds to force fresh response (attempt %d/%d)...",
+                            league,
+                            wait_time,
+                            attempt + 1,
+                            max_retries,
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(
+                            "Failed to fetch Rolling Insights schedule for %s after %d attempts: "
+                            "Server consistently returning 304 Not Modified. URL: %s",
+                            league,
+                            max_retries,
+                            url.replace(rsc_token, "***"),
+                        )
+                        raise Exception(f"Server returned 304 Not Modified for {league} after {max_retries} attempts")
 
                 # Now check for errors (4xx, 5xx)
                 response.raise_for_status()

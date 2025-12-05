@@ -43,6 +43,7 @@ disable=
     W0719,  # see W0703
     W0707,  # idk
     R0912,  # idk
+    R1724,  # some people like using else
 
 # Enable a few important modern warnings
 enable=
