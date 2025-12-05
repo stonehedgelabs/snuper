@@ -51,6 +51,8 @@ logging.basicConfig(
 )
 logger = configure_colored_logger(__name__, CYAN)
 
+DRAFTKINGS_WS_JWT="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImN0eSI6IkpXVCJ9.eyJJc0Fub255bW91cyI6IlRydWUiLCJTaXRlR3JvdXBJZCI6IjM5IiwiU2l0ZUlkIjoiMTUwNjUiLCJEb21haW5JZCI6IjQ0OSIsIkNvdW50cnlDb2RlIjoiVVMiLCJuYmYiOjE3NjEwMDc4NDEsImV4cCI6MTc2MTAwNzk2MSwiaWF0IjoxNzYxMDA3ODQxLCJpc3MiOiJ1cm46ZGsiLCJhdWQiOiJ1cm46ZGsifQ.iD1DWwc0ToslumMKFQn8Wuh8onjoMa_ZlcNgyjNiJz5NgG-nm8_eWfB8oQ3L_FdW-OUcFwCIKgb5ouN7tnmI2RDqGThmRcF4YF7sOHm3Jzbp3aD5oy4_NMyiNMVozhfpn5QHE0KRKcik1OWbYUG9kKT71RFk22H5UMt-cnkoy_DG6C4gvXfUKvSyFqZVwysHrHR6KyXm8k4FggocMrRIXb7XzN-D9pxxKpeX57MBjEPE4Ru1Dr4Ab_LLMafsVX38CwohKuKSaoMMk2783U47gUywDt2bW4W__C0cZQFM1OKlrvIUTYez3TOd-PdTutBSKXpb-qQid0m8s_MX4nR2uG6HfwERL5_QjWtIUhPogOADlDvfPIRuJf1EZCHaRydUqWOBxvkh4JD73N1hRjtkP9HCU7b_pNqNci4p47p-1wmuD8zqGTh29DIUdt4SC3Bfxu_cmzMXnAokgFm_RDvMzLap93LC-BpQQtnmVmkbGh_yJUEBfPEbydYI7YgP1FtgpnmSTCDKZT6UieP1pEyaqvBwat5ZnLRELJUDw0hQjmmoEKK1HIY0AJv4vU47N0kQLpb5pGa5jsWWF6rpYU8an-30HNGuOx-JaYv6erU575ZakrIofbWXqOlugi8ToKtbgof9wiMjdlwX3poJEpAGMQWZqoP3UiWDLaxIvcM6yP4"
+
 
 def sanitize_american_odds(value: Any) -> str | None:
     """Return ASCII-only American odds without leading plus signs."""
@@ -534,7 +536,7 @@ class DraftKingsRunner(BaseRunner):
             heartbeat_interval=DRAFTKINGS_HEARTBEAT_SECONDS,
             log_color=CYAN,
         )
-        self.jwt = os.environ["DRAFTKINGS_WS_JWT"]
+        self.jwt = DRAFTKINGS_WS_JWT
         self.url = DRAFTKINGS_WEBSOCKET_URL
 
     async def run(
