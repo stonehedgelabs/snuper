@@ -457,6 +457,7 @@ class RdsSelectionSink(BaseSink):
             self._table.c.provider,
             self._table.c.event_id,
         )
+        # Unique index for snapshots table only (enables upserts)
         self._upsert_index = Index(
             f"ux_{table_name}_provider_league_event",
             self._table.c.provider,

@@ -87,6 +87,7 @@ class BaseMonitor:
         provider: str,
         sink: SelectionSink,
         monitor_interval: int | None = None,
+        early_exit: bool = False,
     ) -> None:
         """Store directory paths, runner instance, sink, and concurrency policy."""
 
@@ -105,6 +106,7 @@ class BaseMonitor:
         self.sink = sink
         self.local_tz = get_localzone()
         self.monitor_interval = monitor_interval
+        self.early_exit = early_exit
         self._zero_games_counters: dict[str, int] = {}
 
     def event_key(self, event: Event) -> str:
@@ -235,9 +237,12 @@ class BaseMonitor:
     def should_terminate_eod(self) -> bool:
         """Check if all monitored leagues have had 0 live games for enough consecutive checks.
 
-        Returns True if monitor_interval is set and all leagues have been at 0 live games
-        for at least 60 minutes (3600 seconds / monitor_interval checks), indicating EOD.
+        Returns True if early_exit is enabled, monitor_interval is set, and all leagues have been
+        at 0 live games for at least 60 minutes (3600 seconds / monitor_interval checks), indicating EOD.
         """
+        if not self.early_exit:
+            return False
+
         if not self.monitor_interval:
             return False
 

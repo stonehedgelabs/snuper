@@ -378,6 +378,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Log to stdout as well as to --log-file",
     )
+    parser.add_argument(
+        "--early-exit",
+        action="store_true",
+        help="Exit monitor after 60 minutes of no live games (EOD detection). Without this flag, monitor runs forever.",
+    )
     return parser
 
 
