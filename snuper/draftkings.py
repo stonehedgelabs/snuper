@@ -365,7 +365,12 @@ class DraftkingsEventScraper(BaseEventScraper):
     def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Derive away/home team tokens from a DraftKings event slug."""
         slug = urlparse(event_url).path.split("/event/")[-1].split("/")[0]
-        slug = unquote(slug)
+        # Handle double URL encoding (e.g., %2540 -> %40 -> @)
+        # Keep decoding until the string stops changing
+        prev_slug = None
+        while prev_slug != slug:
+            prev_slug = slug
+            slug = unquote(slug)
         try:
             away_part, home_part = slug.split("@")
         except ValueError:
@@ -473,8 +478,12 @@ class DraftkingsEventScraper(BaseEventScraper):
                         await browser.close()
                         match = self.pattern_date.search(html)
                         if not match:
+                            # Log a sample of the HTML to debug what's actually in the page
                             self.log.warning(
-                                "%s - no date found even with browser for %s", self.__class__.__name__, event_url
+                                "%s - no date found even with browser for %s. HTML sample (first 1000 chars): %s",
+                                self.__class__.__name__,
+                                event_url,
+                                html[:1000],
                             )
                             continue
                 utc_str = match.group(1)
