@@ -788,6 +788,7 @@ class DraftKingsMonitor(BaseMonitor):
         provider: str,
         output_dir: pathlib.Path | None = None,
         monitor_interval: int | None = None,
+        early_exit: bool = False,
     ) -> None:
         """Initialise the monitor with the target snapshot directory."""
         super().__init__(
@@ -800,6 +801,7 @@ class DraftKingsMonitor(BaseMonitor):
             sink=sink,
             output_dir=output_dir,
             monitor_interval=monitor_interval,
+            early_exit=early_exit,
         )
         self.log.info("%s - using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -835,6 +837,7 @@ async def run_monitor(
     sink: SelectionSink,
     provider: str,
     output_dir: pathlib.Path | None = None,
+    early_exit: bool = False,
 ) -> None:
     """Execute the DraftKings monitor loop with the configured interval."""
 
@@ -845,6 +848,7 @@ async def run_monitor(
         provider=provider,
         output_dir=output_dir,
         monitor_interval=interval,
+        early_exit=early_exit,
     )
     logger.info("Starting persistent monitor (interval=%ss)...", interval)
     while True:

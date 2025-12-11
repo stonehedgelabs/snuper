@@ -234,6 +234,7 @@ async def _run_monitor_task(
     fs_sink_dir: pathlib.Path,
     sink: SelectionSink,
     monitor_interval: int | None,
+    early_exit: bool,
 ) -> None:
     monitor_tasks: list[Awaitable[None]] = []
     for provider in providers:
@@ -252,6 +253,7 @@ async def _run_monitor_task(
                     sink=sink,
                     provider=provider,
                     output_dir=events_dir,
+                    early_exit=early_exit,
                 )
             )
         else:
@@ -262,6 +264,7 @@ async def _run_monitor_task(
                     sink=sink,
                     provider=provider,
                     output_dir=events_dir,
+                    early_exit=early_exit,
                 )
             )
 
@@ -485,6 +488,7 @@ async def dispatch(args: argparse.Namespace) -> None:
         fs_sink_dir=fs_sink_dir,
         sink=sink,
         monitor_interval=args.monitor_interval,
+        early_exit=args.early_exit,
     )
 
 
