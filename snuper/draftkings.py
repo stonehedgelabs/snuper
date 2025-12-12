@@ -411,10 +411,40 @@ class DraftkingsEventScraper(BaseEventScraper):
         events: list[Event] = []
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-dev-shm-usage",  # Use /tmp instead of /dev/shm to avoid memory issues
+                    "--disable-gpu",  # Disable GPU hardware acceleration
+                    "--no-sandbox",  # Disable sandboxing (helps prevent crashes)
+                    "--disable-setuid-sandbox",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                ],
+            )
             context = await browser.new_context(locale="en-US")
+            # Block images and media to reduce memory usage
+            await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,mp4,webm}", lambda route: route.abort())
             page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+            # Add retry logic for page navigation
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    break
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        self.log.warning(
+                            "%s - page.goto failed (attempt %d/%d): %s. Retrying in 2s...",
+                            self.__class__.__name__,
+                            retry + 1,
+                            max_retries,
+                            e,
+                        )
+                        await asyncio.sleep(2)
+                    else:
+                        raise
 
             # Wait for event links to stabilize instead of fixed timeout
             # DraftKings loads events asynchronously, so we need to wait for the count to stabilize
@@ -469,8 +499,17 @@ class DraftkingsEventScraper(BaseEventScraper):
                         event_url,
                     )
                     async with async_playwright() as p:
-                        browser = await p.chromium.launch(headless=True)
+                        browser = await p.chromium.launch(
+                            headless=True,
+                            args=[
+                                "--disable-dev-shm-usage",
+                                "--disable-gpu",
+                                "--no-sandbox",
+                                "--disable-setuid-sandbox",
+                            ],
+                        )
                         ctx = await browser.new_context(locale="en-US")
+                        await ctx.route("**/*.{png,jpg,jpeg,gif,svg,webp,mp4,webm}", lambda route: route.abort())
                         page = await ctx.new_page()
                         await page.goto(event_url, wait_until="domcontentloaded", timeout=30000)
                         await page.wait_for_timeout(2000)  # Give JavaScript time to render
