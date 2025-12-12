@@ -16,7 +16,7 @@ import re
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from typing import Protocol
 
 from dotenv import load_dotenv
@@ -150,22 +150,111 @@ def parse_log_level(value: str) -> int:
         raise exc
 
 
+class VerbosityFilter(logging.Filter):
+    """Filter log records based on verbose flag - only show critical logs when not verbose."""
+
+    def __init__(self, verbose: bool = False):
+        super().__init__()
+        self.verbose = verbose
+        # Patterns for messages that are ALWAYS important (shown even without --verbose)
+        self.always_show_patterns = [
+            # Critical startup/shutdown
+            "Starting persistent monitor",
+            "starting BetMGM monitor loop",
+            "using input directory at",
+            # Actual game monitoring (not pre-game warnings)
+            "starting monitor for <Event",
+            "Starting websocket runner",
+            # Completion summaries
+            "scraped .* total .* events for today",
+            "saved snapshot for",
+            "persisted .* events for",
+            # Errors and warnings are handled by level, but include specific patterns
+            "failed to",
+            "Failed to",
+            "error",
+            "Error",
+            "crash",
+            "Crash",
+            "exception",
+            "Exception",
+        ]
+        # Patterns for messages that should be HIDDEN when not verbose
+        self.hide_patterns = [
+            "not starting monitor because",
+            "league .* has 0 live games",
+            "fetched daily events for .* leagues from sink",
+            "fetched .* rows for provider",
+            "read .* events from",
+            "returning .* leagues to monitor",
+            "msgs_rcvd",  # Heartbeat stats
+            "odds_rcvd",  # Heartbeat stats
+            "already running task for",
+            "cleaning up finished task",
+            "Sleeping .* before next cycle",
+            "concurrency limit .* reached",
+            "found .* event URLs",
+            "Fetching metadata",
+            "scraping league",
+            "using date info:",
+        ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Always show ERROR and CRITICAL levels regardless of verbose setting
+        if record.levelno >= logging.ERROR:
+            return True
+
+        # If verbose mode is enabled, show everything (respect log level)
+        if self.verbose:
+            return True
+
+        # Not verbose: only show WARNING and above, plus critical INFO messages
+        if record.levelno >= logging.WARNING:
+            return True
+
+        # For INFO and DEBUG: check if this is a critical message
+        msg = record.getMessage()
+
+        # Check if message matches "always show" patterns
+        for pattern in self.always_show_patterns:
+            if re.search(pattern, msg, re.IGNORECASE):
+                return True
+
+        # Check if message matches "hide" patterns - if so, filter it out
+        for pattern in self.hide_patterns:
+            if re.search(pattern, msg, re.IGNORECASE):
+                return False
+
+        # Default for INFO level when not verbose: hide most routine logs
+        # Only show if it's something truly exceptional we didn't catch above
+        if record.levelno == logging.INFO:
+            return False
+
+        # Show DEBUG only in verbose mode (already handled above, but explicit)
+        return False
+
+
 def configure_logging(
     log_file: pathlib.Path | None,
     log_level: int,
     max_log_filesize: int,
     log_stdout: bool = False,
+    verbose: bool = False,
 ) -> None:
-    """Configure logging with rotating file handler and optional console output.
+    """Configure logging with date-based rotating file handler and optional console output.
 
     Args:
-        log_file: Path to log file, or None to use default /tmp/snuper-YYYYmmdd.log
+        log_file: Path to log file base name, or None to use default /tmp/snuper.log
+                  The actual log file will include the date (e.g., snuper-20251212.log)
         log_level: Logging level (e.g., logging.INFO)
-        max_log_filesize: Maximum log file size in bytes before rotation
+        max_log_filesize: Maximum log file size in bytes before rotation (currently unused but kept for backward compatibility)
         log_stdout: If True, also log to stdout/console
+        verbose: If True, show all logs at log_level; if False, show only critical logs
     """
+    del max_log_filesize  # Unused - kept for backward compatibility
     if log_file is None:
-        log_file = pathlib.Path(f"/tmp/snuper-{datetime.now().strftime('%Y%m%d')}.log")
+        # Use a base name that TimedRotatingFileHandler will suffix with dates
+        log_file = pathlib.Path("/tmp/snuper.log")
 
     # Ensure the log file directory exists
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -177,14 +266,23 @@ def configure_logging(
     # Remove any existing handlers
     root_logger.handlers.clear()
 
-    # Create rotating file handler with FIFO behavior (backupCount=0 means only one file)
-    file_handler = RotatingFileHandler(
-        filename=log_file,
-        maxBytes=max_log_filesize,
-        backupCount=0,  # FIFO: no backup files, just overwrite when size is exceeded
+    # Create verbosity filter
+    verbosity_filter = VerbosityFilter(verbose=verbose)
+
+    # Create timed rotating file handler that rotates at midnight (local timezone)
+    # This automatically creates new log files with date suffixes (snuper.log.YYYYMMDD)
+    file_handler = TimedRotatingFileHandler(
+        filename=str(log_file),
+        when='midnight',  # Rotate at midnight in local timezone
+        interval=1,  # Rotate every 1 day
+        backupCount=7,  # Keep 7 days of logs
         encoding="utf-8",
+        utc=False,  # Use local timezone for midnight determination
     )
+    # Customize the suffix to match the desired format
+    file_handler.suffix = "%Y%m%d"
     file_handler.setLevel(log_level)
+    file_handler.addFilter(verbosity_filter)
     file_formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -196,6 +294,7 @@ def configure_logging(
     if log_stdout:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
+        console_handler.addFilter(verbosity_filter)
         console_formatter = logging.Formatter("%(levelname)s - %(message)s")
         console_handler.setFormatter(console_formatter)
         root_logger.addHandler(console_handler)
@@ -235,6 +334,7 @@ async def _run_monitor_task(
     sink: SelectionSink,
     monitor_interval: int | None,
     early_exit: bool,
+    verbose: bool,
 ) -> None:
     monitor_tasks: list[Awaitable[None]] = []
     for provider in providers:
@@ -254,6 +354,7 @@ async def _run_monitor_task(
                     provider=provider,
                     output_dir=events_dir,
                     early_exit=early_exit,
+                    verbose=verbose,
                 )
             )
         else:
@@ -265,6 +366,7 @@ async def _run_monitor_task(
                     provider=provider,
                     output_dir=events_dir,
                     early_exit=early_exit,
+                    verbose=verbose,
                 )
             )
 
@@ -386,6 +488,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exit monitor after 60 minutes of no live games (EOD detection). Without this flag, monitor runs forever.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging for monitor and sink operations (e.g., log 'not starting monitor' and 'has 0 live games' messages)",
+    )
     return parser
 
 
@@ -426,6 +533,7 @@ async def dispatch(args: argparse.Namespace) -> None:
         log_level=args.log_level,
         max_log_filesize=args.max_log_filesize,
         log_stdout=args.log_stdout,
+        verbose=args.verbose,
     )
 
     if args.config is not None:
@@ -489,6 +597,7 @@ async def dispatch(args: argparse.Namespace) -> None:
         sink=sink,
         monitor_interval=args.monitor_interval,
         early_exit=args.early_exit,
+        verbose=args.verbose,
     )
 
 

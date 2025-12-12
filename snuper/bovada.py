@@ -600,6 +600,7 @@ class BovadaMonitor(BaseMonitor):
         output_dir: Path | None = None,
         monitor_interval: int | None = None,
         early_exit: bool = False,
+        verbose: bool = False,
     ) -> None:
         super().__init__(
             input_dir,
@@ -612,6 +613,7 @@ class BovadaMonitor(BaseMonitor):
             output_dir=output_dir,
             monitor_interval=monitor_interval,
             early_exit=early_exit,
+            verbose=verbose,
         )
         self.log.info("%s - using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -648,6 +650,7 @@ async def run_monitor(
     provider: str,
     output_dir: Path | None = None,
     early_exit: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Run the Bovada monitor in a persistent sweep loop."""
 
@@ -656,6 +659,7 @@ async def run_monitor(
         leagues=leagues,
         sink=sink,
         provider=provider,
+        verbose=verbose,
         output_dir=output_dir,
         monitor_interval=interval,
         early_exit=early_exit,

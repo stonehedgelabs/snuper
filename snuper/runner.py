@@ -88,6 +88,7 @@ class BaseMonitor:
         sink: SelectionSink,
         monitor_interval: int | None = None,
         early_exit: bool = False,
+        verbose: bool = False,
     ) -> None:
         """Store directory paths, runner instance, sink, and concurrency policy."""
 
@@ -107,6 +108,7 @@ class BaseMonitor:
         self.local_tz = get_localzone()
         self.monitor_interval = monitor_interval
         self.early_exit = early_exit
+        self.verbose = verbose
         self._zero_games_counters: dict[str, int] = {}
 
     def event_key(self, event: Event) -> str:
@@ -125,13 +127,14 @@ class BaseMonitor:
         now_local = dt.datetime.now(self.local_tz)
 
         if now_local < local_start_time:
-            self.log.info(
-                "%s - not starting monitor because %s start time %s (local timezone of %s) has not started yet",
-                self.__class__.__name__,
-                event,
-                local_start_time,
-                self.local_tz,
-            )
+            if self.verbose:
+                self.log.info(
+                    "%s - not starting monitor because %s start time %s (local timezone of %s) has not started yet",
+                    self.__class__.__name__,
+                    event,
+                    local_start_time,
+                    self.local_tz,
+                )
             return False
         return not event.is_finished()
 
@@ -196,12 +199,14 @@ class BaseMonitor:
             provider=self.provider,
             leagues=list(self._league_filter) if self._league_filter else None,
             output_dir=self.output_dir,
+            verbose=self.verbose,
         )
-        self.log.info(
-            "%s - fetched daily events for %d leagues from sink",
-            self.__class__.__name__,
-            len(snapshots),
-        )
+        if self.verbose:
+            self.log.info(
+                "%s - fetched daily events for %d leagues from sink",
+                self.__class__.__name__,
+                len(snapshots),
+            )
         if not snapshots:
             self.log.warning("%s - no daily events available from sink", self.__class__.__name__)
             await self._prune_tasks({})
@@ -215,12 +220,13 @@ class BaseMonitor:
             live_events = [event for event in events if self.should_monitor(event)]
             active_ids = {event.event_id for event in live_events}
             active_map[league] = active_ids
-            self.log.info(
-                "%s - league %s has %d live games",
-                self.__class__.__name__,
-                league,
-                len(live_events),
-            )
+            if self.verbose:
+                self.log.info(
+                    "%s - league %s has %d live games",
+                    self.__class__.__name__,
+                    league,
+                    len(live_events),
+                )
 
             # Track zero-games counters for EOD detection
             if len(live_events) == 0:

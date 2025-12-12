@@ -97,6 +97,7 @@ class SelectionSink(Protocol):
         leagues: Sequence[str] | None = None,
         timestamp: str | None = None,
         output_dir: Path | None = None,
+        verbose: bool = False,
     ) -> dict[str, list[Event]]: ...
 
 
@@ -171,6 +172,7 @@ class BaseSink(SelectionSink):
         leagues: Sequence[str] | None = None,
         timestamp: str | None = None,
         output_dir: Path | None = None,
+        verbose: bool = False,
     ) -> dict[str, list[Event]]:  # pragma: no cover - abstract helper
         raise NotImplementedError
 
@@ -382,7 +384,9 @@ class FilesystemSelectionSink(BaseSink):
         leagues: Sequence[str] | None = None,
         timestamp: str | None = None,
         output_dir: Path | None = None,
+        verbose: bool = False,
     ) -> dict[str, list[Event]]:
+        del verbose  # Filesystem sink doesn't need verbose logging for load operations
         root = Path(output_dir) if output_dir else self.base_dir
         if root is None:
             return {}
@@ -691,6 +695,7 @@ class RdsSelectionSink(BaseSink):
         leagues: Sequence[str] | None = None,
         timestamp: str | None = None,
         output_dir: Path | None = None,
+        verbose: bool = False,
     ) -> dict[str, list[Event]]:
         del output_dir  # unused
         await self._prepare()
@@ -719,11 +724,12 @@ class RdsSelectionSink(BaseSink):
             with self._engine.begin() as conn:
                 rows = conn.execute(stmt).all()
 
-            logger.info(
-                "rds sink - fetched %d rows for provider %s",
-                len(rows),
-                provider,
-            )
+            if verbose:
+                logger.info(
+                    "rds sink - fetched %d rows for provider %s",
+                    len(rows),
+                    provider,
+                )
 
             per_league_events: dict[str, dict[str, Event]] = {}
 
@@ -759,17 +765,19 @@ class RdsSelectionSink(BaseSink):
             for league_value, league_events in per_league_events.items():
                 ordered = sorted(league_events.values(), key=lambda item: item.start_time)
                 results[league_value] = ordered
+                if verbose:
+                    logger.info(
+                        "rds sink - read %d events from %s/%s",
+                        len(ordered),
+                        provider,
+                        league_value,
+                    )
+            if verbose:
                 logger.info(
-                    "rds sink - read %d events from %s/%s",
-                    len(ordered),
+                    "rds sink - returning %d leagues to monitor for provider %s",
+                    len(results),
                     provider,
-                    league_value,
                 )
-            logger.info(
-                "rds sink - returning %d leagues to monitor for provider %s",
-                len(results),
-                provider,
-            )
             return results
 
         try:
@@ -896,8 +904,9 @@ class CacheSelectionSink(BaseSink):
         leagues: Sequence[str] | None = None,
         timestamp: str | None = None,
         output_dir: Path | None = None,
+        verbose: bool = False,
     ) -> dict[str, list[Event]]:
-        del output_dir  # unused for cache sink
+        del output_dir, verbose  # unused for cache sink
         leagues_key = f"snuper:snapshots:{provider}:leagues"
         try:
             if leagues is None:

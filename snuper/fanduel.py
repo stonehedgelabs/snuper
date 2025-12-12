@@ -236,9 +236,14 @@ async def run_monitor(
     input_dir: pathlib.Path,
     *,
     leagues: Sequence[str] | None = None,
+    sink: SelectionSink | None = None,
+    provider: str | None = None,
+    output_dir: pathlib.Path | None = None,
+    early_exit: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Execute the placeholder FanDuel monitor."""
 
-    _ = leagues
+    _ = leagues, sink, provider, output_dir, early_exit, verbose
     monitor = FanDuelMonitor(input_dir)
     await monitor.run_once()

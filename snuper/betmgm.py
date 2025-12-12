@@ -632,6 +632,7 @@ class BetMGMMonitor(BaseMonitor):
         output_dir: pathlib.Path | None = None,
         monitor_interval: int | None = None,
         early_exit: bool = False,
+        verbose: bool = False,
     ) -> None:
         """Initialise monitor state with snapshot directory and policy."""
         super().__init__(
@@ -645,6 +646,7 @@ class BetMGMMonitor(BaseMonitor):
             output_dir=output_dir,
             monitor_interval=monitor_interval,
             early_exit=early_exit,
+            verbose=verbose,
         )
         self.log.info("%s - monitor using input directory at %s", self.__class__.__name__, self.input_dir)
 
@@ -681,6 +683,7 @@ async def run_monitor(
     provider: str,
     output_dir: pathlib.Path | None = None,
     early_exit: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Start BetMGM monitors and continue refreshing snapshot awareness."""
 
@@ -692,6 +695,7 @@ async def run_monitor(
         output_dir=output_dir,
         monitor_interval=interval,
         early_exit=early_exit,
+        verbose=verbose,
     )
     logger.info("starting BetMGM monitor loop (interval=%ss)...", interval)
 
