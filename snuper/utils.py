@@ -374,7 +374,7 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
     logger.debug("_get_team_abbreviation_from_tokens: %s %s", best_score, best_abbrev)
 
     if best_score >= 55:
-        # print(best_score, best_abbrev, event_team_tokens)
+        print(best_score, best_abbrev, event_team_tokens)
         return best_abbrev
 
     return None
@@ -389,7 +389,7 @@ def _match_sportdata_team_abbreviation(event_team_tokens: tuple[str, ...], api_a
 
     logger.debug("_match_sportdata_team_abbreviation: %s %s", expected_abbrev, api_abbreviation)
 
-    # print(expected_abbrev, api_abbreviation)
+    print(expected_abbrev, api_abbreviation)
 
     return expected_abbrev is not None and expected_abbrev.upper() == api_abbreviation.upper()
 
@@ -676,11 +676,27 @@ async def match_rollinginsight_game(event: Event, schedule_data: dict[str, dict[
         if game_date != event_date:
             continue
 
+        # Try normal matching first
         home_matches = _fuzzy_match_team_name(event.home, home_team)
         away_matches = _fuzzy_match_team_name(event.away, away_team)
 
         if home_matches and away_matches:
             matches.append(game)
+        else:
+            # Try swapped matching (DraftKings URLs don't always follow away@home convention)
+            home_matches_swapped = _fuzzy_match_team_name(event.home, away_team)
+            away_matches_swapped = _fuzzy_match_team_name(event.away, home_team)
+
+            if home_matches_swapped and away_matches_swapped:
+                logger.warning(
+                    "DraftKings URL has teams in non-standard order for game %s. Swapping to match RollingInsights data.",
+                    game.get("game_ID", "unknown"),
+                )
+                # Swap the teams in the game dict before adding to matches
+                game_copy = game.copy()
+                game_copy["home_team"] = away_team
+                game_copy["away_team"] = home_team
+                matches.append(game_copy)
 
     if len(matches) == 0:
         logger.error(
