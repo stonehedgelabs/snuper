@@ -512,17 +512,14 @@ class DraftkingsEventScraper(BaseEventScraper):
                         await ctx.route("**/*.{png,jpg,jpeg,gif,svg,webp,mp4,webm}", lambda route: route.abort())
                         page = await ctx.new_page()
                         await page.goto(event_url, wait_until="domcontentloaded", timeout=30000)
-                        await page.wait_for_timeout(2000)  # Give JavaScript time to render
+                        await page.wait_for_timeout(5000)  # Give JavaScript time to render
                         html = await page.content()
                         await browser.close()
                         match = self.pattern_date.search(html)
                         if not match:
                             # Log a sample of the HTML to debug what's actually in the page
                             self.log.warning(
-                                "%s - no date found even with browser for %s. HTML sample (first 1000 chars): %s",
-                                self.__class__.__name__,
-                                event_url,
-                                html[:1000],
+                                "%s - no date found even with browser for %s.", self.__class__.__name__, event_url
                             )
                             continue
                 utc_str = match.group(1)
