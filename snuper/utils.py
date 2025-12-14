@@ -718,7 +718,14 @@ async def match_rollinginsight_game(event: Event, schedule_data: dict[str, dict[
             event.home,
             event_date,
         )
-        raise Exception(f"Multiple matching RollingInsights games ({len(matches)}) for event {event.event_id}")
+        # Log the duplicate game_IDs to help identify the issue
+        game_ids = [m.get("game_ID", "unknown") for m in matches]
+        logger.error("Duplicate game_IDs: %s", game_ids)
+
+        # Use the first match and continue (deduplication strategy)
+        logger.warning("Using first match (game_ID: %s) and discarding duplicates", game_ids[0])
+        event.set_rollinginsight_game(matches[0])
+        return
 
     event.set_rollinginsight_game(matches[0])
 
