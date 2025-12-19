@@ -362,6 +362,42 @@ class DraftkingsEventScraper(BaseEventScraper):
         )
         self.pattern_date = re.compile(r'"startEventDate":"([^"]+)"')
 
+    def parse_draftkings_date(self, date_text: str) -> dt.datetime:
+        """
+        Parse DraftKings date format like 'Today 4:30 PM' or 'Tomorrow 7:00 PM'.
+        Returns a datetime in UTC.
+        """
+        date_text = date_text.strip()
+
+        # Split into date part and time part
+        parts = date_text.split(maxsplit=2)
+        if len(parts) < 3:
+            raise ValueError(f"Invalid date format: {date_text}")
+
+        day_part, time_part, meridiem = parts
+
+        # Determine the base date
+        now = dt.datetime.now(self.local_tz)
+        if day_part.lower() == "today":
+            base_date = now.date()
+        elif day_part.lower() == "tomorrow":
+            base_date = (now + dt.timedelta(days=1)).date()
+        else:
+            raise ValueError(f"Unsupported day part: {day_part}")
+
+        # Parse time (e.g., "4:30" from "4:30 PM")
+        time_obj = dt.datetime.strptime(f"{time_part} {meridiem}", "%I:%M %p").time()
+
+        # Combine date and time in local timezone
+        # Use replace(tzinfo=...) for zoneinfo.ZoneInfo (not localize, which is pytz-only)
+        dt_local = dt.datetime.combine(base_date, time_obj)
+        dt_local = dt_local.replace(tzinfo=self.local_tz)
+
+        # Convert to UTC
+        dt_utc = dt_local.astimezone(dt.timezone.utc)
+
+        return dt_utc
+
     def extract_team_info(self, event_url: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
         """Derive away/home team tokens from a DraftKings event slug."""
         slug = urlparse(event_url).path.split("/event/")[-1].split("/")[0]
@@ -489,12 +525,20 @@ class DraftkingsEventScraper(BaseEventScraper):
         headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
         for event_url in event_urls:
             try:
+                # DraftKings now requires JavaScript to render date information
+                # Try old format first (for backwards compatibility), then new format
                 r = httpx.get(event_url, headers=headers, timeout=10)
                 match = self.pattern_date.search(r.text)
-                if not match:
-                    # Fallback: use Playwright to fetch with JavaScript execution
+                dt_utc = None
+
+                if match:
+                    # Old format: ISO timestamp in JSON
+                    utc_str = match.group(1)
+                    dt_utc = dt.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+                else:
+                    # New format: use Playwright to extract "Today 4:30 PM" format
                     self.log.info(
-                        "%s - date not in HTML for %s, fetching with browser (JavaScript)",
+                        "%s - using browser to extract date for %s",
                         self.__class__.__name__,
                         event_url,
                     )
@@ -513,17 +557,30 @@ class DraftkingsEventScraper(BaseEventScraper):
                         page = await ctx.new_page()
                         await page.goto(event_url, wait_until="domcontentloaded", timeout=30000)
                         await page.wait_for_timeout(5000)  # Give JavaScript time to render
-                        html = await page.content()
-                        await browser.close()
-                        match = self.pattern_date.search(html)
-                        if not match:
-                            # Log a sample of the HTML to debug what's actually in the page
-                            self.log.warning(
-                                "%s - no date found even with browser for %s.", self.__class__.__name__, event_url
+
+                        # Extract date from new HTML structure
+                        date_element = await page.query_selector('[data-testid="scoreboard-date"]')
+                        if not date_element:
+                            date_element = await page.query_selector('p.scoreboardDate__b-IW4')
+
+                        if date_element:
+                            date_text = await date_element.inner_text()
+                            self.log.debug(
+                                "%s - extracted date text: '%s' for %s",
+                                self.__class__.__name__,
+                                date_text,
+                                event_url,
                             )
-                            continue
-                utc_str = match.group(1)
-                dt_utc = dt.datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+                            dt_utc = self.parse_draftkings_date(date_text)
+                        else:
+                            self.log.warning("%s - no date element found for %s", self.__class__.__name__, event_url)
+
+                        await browser.close()
+
+                if not dt_utc:
+                    self.log.warning("%s - could not extract date for %s, skipping", self.__class__.__name__, event_url)
+                    continue
+
                 dt_local = dt_utc.astimezone(self.local_tz)
 
                 if not start_of_day <= dt_local < end_of_day:
