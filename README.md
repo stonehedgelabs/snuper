@@ -37,6 +37,7 @@ usage: cli.py [-h] [-p PROVIDER] -t {scrape,monitor} [-c CONFIG] [-l LEAGUE]
               [--merge-sportdata-games] [--merge-rollinginsights-games]
               [--merge-all-games] [--log-file LOG_FILE]
               [--log-level LOG_LEVEL] [--max-log-filesize MAX_LOG_FILESIZE]
+              [--log-stdout] [--early-exit] [--verbose]
 
 Unified Event Monitor CLI
 
@@ -85,6 +86,12 @@ options:
                         Maximum log file size before rotation with FIFO
                         eviction (default: 10MB, accepts formats like '10MB',
                         '5mb', '100Mb')
+  --log-stdout          Log to stdout as well as to --log-file
+  --early-exit          Exit monitor after 60 minutes of no live games (EOD
+                        detection). Without this flag, monitor runs forever.
+  --verbose             Enable verbose logging for monitor and sink operations
+                        (e.g., log 'not starting monitor' and 'has 0 live
+                        games' messages)
 ```
 
 - Providers must be supplied using their full names (e.g., `draftkings`,
@@ -111,7 +118,11 @@ options:
   (default: `info`, accepts string levels like `debug` or numeric levels 0-50), and
   `--max-log-filesize` (default: `10MB`, accepts formats like `10MB`, `5mb`, or `100Mb`).
   When the log file reaches the maximum size, earlier logs are evicted (FIFO behavior) to
-  keep the file size under the limit.
+  keep the file size under the limit. Use `--log-stdout` to also output logs to stdout.
+- Use `--early-exit` to automatically terminate monitors after 60 minutes of no live games
+  (EOD detection). Without this flag, monitors run indefinitely.
+- Use `--verbose` to enable detailed logging for monitor and sink operations, including
+  "not starting monitor" and "has 0 live games" informational messages.
 
 Examples:
 
