@@ -1,34 +1,35 @@
-[project]
+[tool.poetry]
 name = "snuper"
 version = "0.1.0"
 description = "Event monitoring service for sports data platforms."
+authors = ["Arbitration Team"]
 readme = "README.md"
-requires-python = ">=3.12,<4.0"
-dependencies = [
-    "msgpack",
-    "python-dotenv",
-    "httpx",
-    "websockets (>=10.0,<13.0)",
-    "black",
-    "playwright",
-    "tzlocal",
-    "pytest (>=8.4.2,<9.0.0)",
-    "pytest-asyncio (>=1.2.0,<2.0.0)",
-    "pylint (>=4.0.2,<5.0.0)",
-    "pytz (>=2025.2,<2026.0)",
-    "inflection (>=0.5.1,<0.6.0)",
-    "rapidfuzz (>=3.14.1,<4.0.0)",
-    "playwright-stealth (>=2.0.0,<3.0.0)",
-    "redis (>=5.0,<6.0)",
-    "sqlalchemy (>=2.0,<3.0)",
-    "psycopg2 (>=2.9.11,<3.0.0)"
-]
-[project.optional-dependencies]
-dev = [
-    "black",
-    "pytest",
-    "pytest-asyncio",
-]
+packages = [{include = "snuper"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+msgpack = "==1.1.2"
+python-dotenv = "==1.1.1"
+httpx = "==0.28.1"
+websockets = "==12.0"
+playwright = "==1.55.0"
+tzlocal = "==5.3.1"
+pytz = "==2025.2"
+inflection = "==0.5.1"
+rapidfuzz = "==3.14.1"
+playwright-stealth = "==2.0.0"
+redis = "==5.3.1"
+sqlalchemy = "==2.0.45"
+psycopg2 = "==2.9.11"
+
+[tool.poetry.group.dev.dependencies]
+black = "==24.10.0"
+pytest = "==8.4.2"
+pytest-asyncio = "==1.2.0"
+pylint = "==3.3.9"
+
+[tool.poetry.scripts]
+snuper = "snuper.cli:main"
 
 [tool.black]
 line-length = 120
@@ -51,9 +52,6 @@ exclude = '''
 )/
 '''
 
-[project.scripts]
-format = "black:main"
-snuper = "snuper.cli:main"
-
-
-[tool.poetry]
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
