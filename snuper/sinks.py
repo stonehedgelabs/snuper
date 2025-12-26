@@ -399,6 +399,7 @@ class FilesystemSelectionSink(BaseSink):
                 return {}
             results: dict[str, list[Event]] = {}
             if league_filter:
+                # pylint: disable=not-an-iterable
                 files = [events_dir / f"{stamp}-{league}.json" for league in league_filter]
             else:
                 files = list(events_dir.glob(f"{stamp}-*.json"))
