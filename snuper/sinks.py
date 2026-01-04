@@ -294,9 +294,26 @@ def _event_from_dict(payload: dict[str, Any]) -> Event:
 
 
 class FilesystemSelectionSink(BaseSink):
-    """Append odds updates to JSONL files on disk."""
+    """Filesystem-based sink for storing sportsbook data as JSON files.
+
+    This is the simplest and fastest sink option, ideal for getting started
+    without database setup. Data is stored in a structured directory tree:
+
+    Structure:
+        {base_dir}/{provider}/events/YYYYMMDD-{league}.json  # Daily snapshots
+        {base_dir}/{provider}/odds/YYYYMMDD-{league}-{event_id}.json  # Live odds
+
+    File Formats:
+        - Events: Single JSON array containing all games for the day
+        - Odds: Newline-delimited JSON (JSONL) with one record per line
+    """
 
     def __init__(self, base_dir: Path) -> None:
+        """Initialize filesystem sink with base directory.
+
+        Args:
+            base_dir: Root directory for storing all sportsbook data
+        """
         super().__init__()
         self.base_dir = Path(base_dir)
 
@@ -322,6 +339,16 @@ class FilesystemSelectionSink(BaseSink):
         selection_update: dict[str, Any],
         output_dir: Path | None = None,
     ) -> None:
+        """Append a single odds update to the JSONL file for this event.
+
+        Each line in the output file contains a timestamped JSON object with:
+        - provider: Source sportsbook name
+        - league: Sport league (nba, nfl, mlb)
+        - event: Game metadata (teams, start time, etc.)
+        - selection_update: Current odds/spreads for all markets
+        - raw: Original provider response (for debugging)
+        - timestamp: ISO format timestamp of this update
+        """
         root = Path(output_dir) if output_dir else self.base_dir
         record = _build_record(
             provider=provider,
@@ -353,6 +380,28 @@ class FilesystemSelectionSink(BaseSink):
         output_dir: Path | None = None,
         overwrite: bool = False,
     ) -> Path | None:
+        """Save daily event snapshot to JSON file.
+
+        Creates or updates a JSON file containing all events for a given
+        league and date. Each file contains an array of event objects with:
+        - event_id: Unique identifier for the game
+        - league: Sport league
+        - event_url: Link to game page on sportsbook
+        - start_time: Game start time in ISO format
+        - away/home: Team names as [display_name, identifier]
+        - selections: Initial odds/spreads for all markets
+
+        Args:
+            provider: Sportsbook provider name
+            league: Sport league (nba, nfl, mlb)
+            events: List of Event objects to save
+            timestamp: Optional timestamp (defaults to now)
+            output_dir: Override base directory if specified
+            overwrite: Whether to replace existing snapshots
+
+        Returns:
+            Path to saved snapshot file, or None if skipped
+        """
         root = Path(output_dir) if output_dir else self.base_dir
         if root is None:
             raise ValueError("filesystem sink requires an output directory")

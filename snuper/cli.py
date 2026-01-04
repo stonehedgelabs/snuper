@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from snuper import betmgm, bovada, draftkings, fanduel
 from snuper.config import load_config
 from snuper.sinks import SelectionSink, SinkType, build_sink
-from snuper.constants import Provider, SUPPORTED_LEAGUES
+from snuper.constants import Provider, TaskType, SUPPORTED_LEAGUES
 
 load_dotenv()
 
@@ -386,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-t",
         "--task",
-        choices=["scrape", "monitor"],
+        choices=[TaskType.SCRAPE.value, TaskType.MONITOR.value],
         required=True,
         help="Operation to perform",
     )
@@ -517,7 +517,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--merge-all-games cannot be used with --merge-sportdata-games or --merge-rollinginsights-games")
     if (
         args.merge_sportdata_games or args.merge_rollinginsights_games or args.merge_all_games
-    ) and args.task != "scrape":
+    ) and args.task != TaskType.SCRAPE.value:
         parser.error(
             "--merge-sportdata-games, --merge-rollinginsights-games, and --merge-all-games require --task scrape"
         )
@@ -556,7 +556,7 @@ async def dispatch(args: argparse.Namespace) -> None:
         logger.debug("No --fs-sink-dir supplied; using temporary staging directory %s", fs_sink_dir)
 
     rds_selection_table: str | None = None
-    if sink_type is SinkType.RDS and task == "monitor":
+    if sink_type is SinkType.RDS and task == TaskType.MONITOR.value:
         if args.rds_table is None:
             raise ValueError("--rds-table is required when monitoring uses the rds sink")
         rds_selection_table = f"{args.rds_table}_selection_changes"
@@ -575,7 +575,7 @@ async def dispatch(args: argparse.Namespace) -> None:
     merge_sportdata_games = args.merge_sportdata_games or args.merge_all_games
     merge_rollinginsights_games = args.merge_rollinginsights_games or args.merge_all_games
 
-    if task == "scrape":
+    if task == TaskType.SCRAPE.value:
         await _run_scrape_task(
             providers=providers,
             leagues=leagues,

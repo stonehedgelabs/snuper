@@ -161,6 +161,9 @@ class SeasonsConfig:
 class RedditApiConfig:
     """Reddit API configuration including comment limits and user agent."""
 
+    token_url: str
+    oauth_base_url: str
+    base_url: str
     default_comment_limit: int
     max_comment_limit: int
     default_sort: str
@@ -170,6 +173,9 @@ class RedditApiConfig:
     def from_dict(cls, data: Mapping[str, Any]) -> "RedditApiConfig":
         """Create RedditApiConfig from a dictionary mapping."""
         return cls(
+            token_url=str(data["token_url"]),
+            oauth_base_url=str(data["oauth_base_url"]),
+            base_url=str(data["base_url"]),
             default_comment_limit=int(data["default_comment_limit"]),
             max_comment_limit=int(data["max_comment_limit"]),
             default_sort=str(data["default_sort"]),
@@ -190,10 +196,11 @@ class ApiConfig:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ApiConfig":
         """Create ApiConfig from a dictionary mapping."""
-        reddit_api_data = data.get("reddit_api")
+        # Check for both "reddit" (new) and "reddit_api" (old) for backwards compatibility
+        reddit_api_data = data.get("reddit") or data.get("reddit_api")
         reddit_api = RedditApiConfig.from_dict(reddit_api_data) if reddit_api_data else None
         if reddit_api is None:
-            raise ValueError("reddit_api configuration is required")
+            raise ValueError("reddit or reddit_api configuration is required")
         return cls(
             sportsdata_base_url=str(data["sportsdata_base_url"]),
             rolling_insights_base_url=str(data["rolling_insights_base_url"]),

@@ -374,7 +374,9 @@ def _get_team_abbreviation_from_tokens(event_team_tokens: tuple[str, ...], leagu
     logger.debug("_get_team_abbreviation_from_tokens: %s %s", best_score, best_abbrev)
 
     if best_score >= 55:
-        print(best_score, best_abbrev, event_team_tokens)
+        logger.debug(
+            "Team abbreviation match: score=%s abbrev=%s tokens=%s", best_score, best_abbrev, event_team_tokens
+        )
         return best_abbrev
 
     return None
@@ -387,9 +389,7 @@ def _match_sportdata_team_abbreviation(event_team_tokens: tuple[str, ...], api_a
     """
     expected_abbrev = _get_team_abbreviation_from_tokens(event_team_tokens, league)
 
-    logger.debug("_match_sportdata_team_abbreviation: %s %s", expected_abbrev, api_abbreviation)
-
-    print(expected_abbrev, api_abbreviation)
+    logger.debug("_match_sportdata_team_abbreviation: expected=%s api=%s", expected_abbrev, api_abbreviation)
 
     return expected_abbrev is not None and expected_abbrev.upper() == api_abbreviation.upper()
 

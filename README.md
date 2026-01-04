@@ -7,6 +7,7 @@
 </div>
 
 - [Overview](#overview)
+- [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Coverage](#coverage)
 - [Workflows](#workflows)
@@ -24,6 +25,61 @@ snapshots, and streaming live odds updates.
 - Asynchronous CLI for gathering sportsbook events and live odds updates.
 - Integrates DraftKings, BetMGM, Bovada, and FanDuel (monitoring in progress).
 - Targets NBA, NFL, and MLB leagues with an extensible storage interface.
+- Requires Python 3.12 or higher.
+
+## Quick Start
+
+The fastest way to get started is using the JSON flatfile sink, which stores data locally without requiring database setup:
+
+```sh
+# Install snuper
+$ pip install snuper
+
+# Scrape today's games and save to JSON files
+$ snuper --task scrape --sink fs --fs-sink-dir ./data
+
+# Monitor live odds, streaming updates to JSONL files
+$ snuper --task monitor --sink fs --fs-sink-dir ./data
+```
+
+This creates a directory structure like:
+```
+data/
+├── draftkings/
+│   ├── events/
+│   │   ├── 20240104-nba.json      # Today's NBA game snapshots
+│   │   └── 20240104-nfl.json      # Today's NFL game snapshots
+│   └── odds/
+│       ├── 20240104-nba-401234567.json  # Live odds stream for game
+│       └── 20240104-nfl-401234568.json  # Live odds stream for game
+└── betmgm/
+    ├── events/
+    └── odds/
+```
+
+Sample event snapshot (events/20240104-nba.json):
+```json
+[
+  {
+    "event_id": "401234567",
+    "league": "nba",
+    "event_url": "https://sportsbook.draftkings.com/...",
+    "start_time": "2024-01-04T19:30:00",
+    "away": ["Lakers", "los-angeles-lakers"],
+    "home": ["Celtics", "boston-celtics"],
+    "selections": {
+      "spread_away": {"id": "s_123", "odds": -110, "spread": 5.5},
+      "spread_home": {"id": "s_124", "odds": -110, "spread": -5.5}
+    }
+  }
+]
+```
+
+Sample odds stream (odds/20240104-nba-401234567.json):
+```json
+{"provider":"draftkings","league":"nba","event":{"event_id":"401234567"},"selection_update":{"s_123":{"odds":-115,"spread":5.5}},"timestamp":"2024-01-04T19:35:22"}
+{"provider":"draftkings","league":"nba","event":{"event_id":"401234567"},"selection_update":{"s_124":{"odds":-105,"spread":-5.5}},"timestamp":"2024-01-04T19:35:45"}
+```
 
 ## Usage
 
@@ -127,29 +183,38 @@ options:
 Examples:
 
 ```sh
-$ super --task scrape \
-  --sink rds \
-  --rds-uri postgresql://postgres@localhost/arbitration \
-  --rds-table snuper_events \
-  --config /Users/rashad/dev/repos/arbitration/arb-rs/config.toml \
-  --merge-all-games \
-  --overwrite
+# Scrape today's NBA games from DraftKings to local JSON files
+$ snuper --task scrape \
+  --provider draftkings \
+  --league nba \
+  --sink fs \
+  --fs-sink-dir ./data
 ```
-- Run the `bovada` and `draftkings` scrapers for all leagues, writing fresh daily snapshots of today's games.
-
-> This `scrape` task is performed every morning.
-
 
 ```sh
-$ snuper --task monitor \
+# Scrape all providers and leagues to a PostgreSQL database
+$ snuper --task scrape \
   --sink rds \
-  --rds-uri postgresql://postgres@localhost/arbitration \
-  --rds-table snuper_events
+  --rds-uri postgresql://user:pass@localhost/sports_db \
+  --rds-table events \
+  --overwrite
 ```
 
-- Run the `bovada` and `draftkings` task monitors for all leagues, writing each odds update from all live games.
+```sh
+# Monitor live odds for all scraped games, save to JSON files
+$ snuper --task monitor \
+  --sink fs \
+  --fs-sink-dir ./data \
+  --monitor-interval 30
+```
 
-> This `monitor` task runs in perpetuity but only stores data when games are live.
+```sh
+# Monitor live odds with database persistence
+$ snuper --task monitor \
+  --sink rds \
+  --rds-uri postgresql://user:pass@localhost/sports_db \
+  --rds-table events
+```
 
 
 ### RDS table naming

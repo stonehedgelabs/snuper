@@ -2,6 +2,31 @@ from __future__ import annotations
 
 import enum
 
+
+class League(enum.Enum):
+    """Sports leagues."""
+
+    NBA = "nba"
+    MLB = "mlb"
+    NFL = "nfl"
+
+
+class Provider(enum.Enum):
+    """Sports data providers."""
+
+    DraftKings = "draftkings"
+    BetMGM = "betmgm"
+    FanDuel = "fanduel"
+    Bovada = "bovada"
+
+
+class TaskType(enum.Enum):
+    """CLI task types."""
+
+    SCRAPE = "scrape"
+    MONITOR = "monitor"
+
+
 # ANSI escape code for cyan log output.
 CYAN = "\033[96m"
 
@@ -18,7 +43,7 @@ RESET = "\033[0m"
 DATE_STAMP_FORMAT = "%Y%m%d"
 
 # Canonical list of leagues supported across scrapers.
-SUPPORTED_LEAGUES = ["nba", "nfl", "mlb"]
+SUPPORTED_LEAGUES = [League.NBA.value, League.NFL.value, League.MLB.value]
 
 # Default event duration used to determine when games expire (seconds).
 GAME_RUNTIME_SECONDS = 3.5 * 3600
@@ -52,9 +77,9 @@ DRAFTKINGS_HEARTBEAT_SECONDS = 60
 
 # Landing pages used when scraping DraftKings event metadata.
 DRAFTKINGS_LEAGUE_URLS = {
-    "nfl": "https://sportsbook.draftkings.com/leagues/football/nfl",
-    "mlb": "https://sportsbook.draftkings.com/leagues/baseball/mlb",
-    "nba": "https://sportsbook.draftkings.com/leagues/basketball/nba",
+    League.NFL.value: "https://sportsbook.draftkings.com/leagues/football/nfl",
+    League.MLB.value: "https://sportsbook.draftkings.com/leagues/baseball/mlb",
+    League.NBA.value: "https://sportsbook.draftkings.com/leagues/basketball/nba",
 }
 
 # Seconds between successive MGM page reloads while polling.
@@ -80,9 +105,9 @@ MAX_RUNNER_ERRORS = 5
 
 # League index pages used to collect MGM event slugs.
 MGM_LEAGUE_URLS = {
-    "nfl": "https://www.co.betmgm.com/en/sports/football-11/today",
-    "mlb": "https://www.co.betmgm.com/en/sports/baseball-23/today",
-    "nba": "https://www.co.betmgm.com/en/sports/basketball-7/today",
+    League.NFL.value: "https://www.co.betmgm.com/en/sports/football-11/today",
+    League.MLB.value: "https://www.co.betmgm.com/en/sports/baseball-23/today",
+    League.NBA.value: "https://www.co.betmgm.com/en/sports/basketball-7/today",
 }
 # Lowercase MGM team slugs that flag NBA events during filtering.
 MGM_NBA_TEAMS = {
@@ -189,26 +214,9 @@ MGM_MLB_TEAMS = {
 }
 
 
-class League(enum.Enum):
-    """Sports leagues."""
-
-    NBA = "nba"
-    MLB = "mlb"
-    NFL = "nfl"
-
-
-class Provider(enum.Enum):
-    """Sports data providers."""
-
-    DraftKings = "draftkings"
-    BetMGM = "betmgm"
-    FanDuel = "fanduel"
-    Bovada = "bovada"
-
-
 # Mapping from league codes to their parent sports.
 SPORTS = {
-    "nba": "basketball",
-    "mlb": "baseball",
-    "nfl": "football",
+    League.NBA.value: "basketball",
+    League.MLB.value: "baseball",
+    League.NFL.value: "football",
 }
