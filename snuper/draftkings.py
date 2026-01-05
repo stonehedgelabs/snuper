@@ -364,7 +364,7 @@ class DraftkingsEventScraper(BaseEventScraper):
 
     def parse_draftkings_date(self, date_text: str) -> dt.datetime:
         """
-        Parse DraftKings date format like 'Today 4:30 PM' or 'Tomorrow 7:00 PM'.
+        Parse DraftKings date format like 'Today 4:30 PM', 'Tomorrow 7:00 PM', or 'Sun 1:00 PM'.
         Returns a datetime in UTC.
         """
         date_text = date_text.strip()
@@ -383,7 +383,52 @@ class DraftkingsEventScraper(BaseEventScraper):
         elif day_part.lower() == "tomorrow":
             base_date = (now + dt.timedelta(days=1)).date()
         else:
-            raise ValueError(f"Unsupported day part: {day_part}")
+            # Try to parse as weekday abbreviation
+            weekday_map = {
+                'mon': 0,
+                'monday': 0,
+                'tue': 1,
+                'tuesday': 1,
+                'wed': 2,
+                'wednesday': 2,
+                'thu': 3,
+                'thursday': 3,
+                'fri': 4,
+                'friday': 4,
+                'sat': 5,
+                'saturday': 5,
+                'sun': 6,
+                'sunday': 6,
+            }
+
+            day_lower = day_part.lower()
+            if day_lower in weekday_map:
+                target_weekday = weekday_map[day_lower]
+                current_weekday = now.weekday()
+
+                # Calculate days until target weekday
+                # If target is Sunday (6 in our map), convert to 0 for Python's weekday system
+                if target_weekday == 6:
+                    target_weekday_python = 6  # Sunday in isoweekday
+                    days_ahead = (target_weekday_python - now.isoweekday()) % 7
+                else:
+                    days_ahead = (target_weekday - current_weekday) % 7
+
+                # If days_ahead is 0, it means today. But if the time has passed, it's likely next week
+                # For sports events, we'll assume it's the next occurrence within 7 days
+                if days_ahead == 0:
+                    # Check if we should use next week by comparing times
+                    time_obj = dt.datetime.strptime(f"{time_part} {meridiem}", "%I:%M %p").time()
+                    dt_combined = dt.datetime.combine(now.date(), time_obj)
+                    dt_combined = dt_combined.replace(tzinfo=self.local_tz)
+
+                    # If the event time has already passed today, use next week
+                    if dt_combined <= now:
+                        days_ahead = 7
+
+                base_date = (now + dt.timedelta(days=days_ahead)).date()
+            else:
+                raise ValueError(f"Unsupported day part: {day_part}")
 
         # Parse time (e.g., "4:30" from "4:30 PM")
         time_obj = dt.datetime.strptime(f"{time_part} {meridiem}", "%I:%M %p").time()
