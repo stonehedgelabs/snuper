@@ -207,7 +207,13 @@ class BovadaEventScraper(BaseEventScraper):
             end_of_day = start_of_day + dt.timedelta(days=1)
 
             for group in data:
-                events = group.get("events", [])
+                # Handle new API structure where each group has 'path' and 'events'
+                if isinstance(group, dict) and "events" in group:
+                    events = group.get("events", [])
+                else:
+                    # Fallback for old structure (if events are directly in the list)
+                    events = [group] if isinstance(group, dict) else []
+
                 self.log.debug("%s - found %d events", self.__class__.__name__, len(events))
                 for ev in events:
                     if not is_league_matchup(ev.get("link"), context.league):
