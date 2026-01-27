@@ -209,6 +209,19 @@ class BovadaEventScraper(BaseEventScraper):
             for group in data:
                 # Handle new API structure where each group has 'path' and 'events'
                 if isinstance(group, dict) and "events" in group:
+                    # Check if this group is for the league we want (NBA, NFL, MLB)
+                    path = group.get("path", [])
+                    league_upper = context.league.upper()
+
+                    # Check if any path element indicates this league
+                    is_target_league = any(
+                        p.get("description", "").upper() == league_upper for p in path if isinstance(p, dict)
+                    )
+
+                    if not is_target_league:
+                        self.log.debug("%s - skipping group, not %s league", self.__class__.__name__, context.league)
+                        continue
+
                     events = group.get("events", [])
                 else:
                     # Fallback for old structure (if events are directly in the list)
