@@ -126,8 +126,9 @@ class SeasonWindow:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SeasonWindow":
         """Create SeasonWindow from a dictionary mapping."""
+        # Map 'season' field from config to 'regular' field in SeasonWindow
         return cls(
-            regular=str(data["regular"]),
+            regular=str(data.get("season", data.get("regular"))),
             postseason=str(data["postseason"]),
             postseason_start=str(data["postseason_start"]),
         )
