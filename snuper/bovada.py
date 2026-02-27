@@ -215,7 +215,7 @@ class BovadaEventScraper(BaseEventScraper):
 
                     # Check if any path element indicates this league
                     is_target_league = any(
-                        p.get("description", "").upper() == league_upper for p in path if isinstance(p, dict)
+                        league_upper in p.get("description", "").upper() for p in path if isinstance(p, dict)
                     )
 
                     if not is_target_league:
