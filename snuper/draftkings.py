@@ -362,12 +362,31 @@ class DraftkingsEventScraper(BaseEventScraper):
         )
         self.pattern_date = re.compile(r'"startEventDate":"([^"]+)"')
 
-    def parse_draftkings_date(self, date_text: str) -> dt.datetime:
+    def parse_draftkings_date(self, date_text: str, league: str) -> dt.datetime:
         """
         Parse DraftKings date format like 'Today 4:30 PM', 'Tomorrow 7:00 PM', or 'Sun 1:00 PM'.
         Returns a datetime in UTC.
         """
         date_text = date_text.strip()
+
+        if league == League.MLB.value:
+            try:
+                # Remove day of week if present (e.g., "Thu " from "Thu Mar 26th 5:30 PM")
+                cleaned = re.sub(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+', '', date_text, flags=re.IGNORECASE)
+                # Remove ordinal suffix (st, nd, rd, th) from the day
+                cleaned = re.sub(r'(\d+)(?:st|nd|rd|th)', r'\1', cleaned)
+                now = dt.datetime.now(self.local_tz)
+                current_year = now.year
+                date_with_year = f"{cleaned} {current_year}"
+                dt_obj = dt.datetime.strptime(date_with_year, "%b %d %I:%M %p %Y")
+                dt_obj = dt_obj.replace(tzinfo=self.local_tz)
+
+                if dt_obj < now and (now - dt_obj).days > 180:
+                    dt_obj = dt_obj.replace(year=current_year + 1)
+
+                return dt_obj.astimezone(dt.timezone.utc)
+            except ValueError:
+                pass
 
         # Split into date part and time part
         parts = date_text.split(maxsplit=2)
@@ -616,7 +635,7 @@ class DraftkingsEventScraper(BaseEventScraper):
                                 date_text,
                                 event_url,
                             )
-                            dt_utc = self.parse_draftkings_date(date_text)
+                            dt_utc = self.parse_draftkings_date(date_text, league)
                         else:
                             self.log.warning("%s - no date element found for %s", self.__class__.__name__, event_url)
 
