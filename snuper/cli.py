@@ -15,8 +15,6 @@ import pathlib
 import re
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import datetime
-from logging.handlers import TimedRotatingFileHandler
 from typing import Protocol
 
 from dotenv import load_dotenv
@@ -118,18 +116,6 @@ def league_argument(value: str) -> list[str]:
         raise argparse.ArgumentTypeError("No leagues supplied")
 
     return leagues
-
-
-def parse_filesize(value: str) -> int:
-    """Parse a filesize string (e.g., '10MB', '5mb', '100Mb') to bytes."""
-    pattern = r'^(\d+(?:\.\d+)?)\s*(mb|MB|Mb)$'
-    match = re.match(pattern, value.strip())
-    if not match:
-        raise argparse.ArgumentTypeError(
-            f"Invalid filesize format: {value}. Expected format like '10MB', '5mb', or '100Mb'"
-        )
-    size_value = float(match.group(1))
-    return int(size_value * 1024 * 1024)
 
 
 def parse_log_level(value: str) -> int:
@@ -234,70 +220,21 @@ class VerbosityFilter(logging.Filter):
         return False
 
 
-def configure_logging(
-    log_file: pathlib.Path | None,
-    log_level: int,
-    max_log_filesize: int,
-    log_stdout: bool = False,
-    verbose: bool = False,
-) -> None:
-    """Configure logging with date-based rotating file handler and optional console output.
-
-    Args:
-        log_file: Path to log file base name, or None to use default /tmp/snuper.log
-                  The actual log file will include the date (e.g., snuper-20251212.log)
-        log_level: Logging level (e.g., logging.INFO)
-        max_log_filesize: Maximum log file size in bytes before rotation (currently unused but kept for backward compatibility)
-        log_stdout: If True, also log to stdout/console
-        verbose: If True, show all logs at log_level; if False, show only critical logs
-    """
-    del max_log_filesize  # Unused - kept for backward compatibility
-    if log_file is None:
-        # Use a base name that TimedRotatingFileHandler will suffix with dates
-        log_file = pathlib.Path("/tmp/snuper.log")
-
-    # Ensure the log file directory exists
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Configure the root logger
+def configure_logging(log_level: int, verbose: bool = False) -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
-
-    # Remove any existing handlers
     root_logger.handlers.clear()
 
-    # Create verbosity filter
-    verbosity_filter = VerbosityFilter(verbose=verbose)
-
-    # Create timed rotating file handler that rotates at midnight (local timezone)
-    # This automatically creates new log files with date suffixes (snuper.log.YYYYMMDD)
-    file_handler = TimedRotatingFileHandler(
-        filename=str(log_file),
-        when='midnight',  # Rotate at midnight in local timezone
-        interval=1,  # Rotate every 1 day
-        backupCount=7,  # Keep 7 days of logs
-        encoding="utf-8",
-        utc=False,  # Use local timezone for midnight determination
+    handler = logging.StreamHandler()
+    handler.setLevel(log_level)
+    handler.addFilter(VerbosityFilter(verbose=verbose))
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     )
-    # Customize the suffix to match the desired format
-    file_handler.suffix = "%Y%m%d"
-    file_handler.setLevel(log_level)
-    file_handler.addFilter(verbosity_filter)
-    file_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    file_handler.setFormatter(file_formatter)
-    root_logger.addHandler(file_handler)
-
-    # Also add console handler for real-time feedback
-    if log_stdout:
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(log_level)
-        console_handler.addFilter(verbosity_filter)
-        console_formatter = logging.Formatter("%(levelname)s - %(message)s")
-        console_handler.setFormatter(console_formatter)
-        root_logger.addHandler(console_handler)
+    root_logger.addHandler(handler)
 
 
 async def _run_scrape_task(
@@ -414,9 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Refresh interval in seconds for the DraftKings monitor",
     )
     parser.add_argument(
-        "--overwrite",
+        "--overwrite-games",
+        dest="overwrite_games",
         action="store_true",
-        help="Overwrite existing snapshots instead of skipping",
+        help="Overwrite existing game snapshots instead of skipping",
     )
     parser.add_argument(
         "--sink",
@@ -462,26 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Match and merge both Sportdata and Rolling Insights games (equivalent to using both --merge-sportdata-games and --merge-rollinginsights-games)",
     )
     parser.add_argument(
-        "--log-file",
-        type=pathlib.Path,
-        help=f"Path to log file (default: /tmp/snuper-{datetime.now().strftime('%Y%m%d')}.log)",
-    )
-    parser.add_argument(
         "--log-level",
         type=parse_log_level,
         default=logging.INFO,
         help="Logging level as a string (debug, info, warning, error, critical) or number 0-50 (default: info)",
-    )
-    parser.add_argument(
-        "--max-log-filesize",
-        type=parse_filesize,
-        default="10MB",
-        help="Maximum log file size before rotation with FIFO eviction (default: 10MB, accepts formats like '10MB', '5mb', '100Mb')",
-    )
-    parser.add_argument(
-        "--log-stdout",
-        action="store_true",
-        help="Log to stdout as well as to --log-file",
     )
     parser.add_argument(
         "--early-exit",
@@ -527,14 +449,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
 
 async def dispatch(args: argparse.Namespace) -> None:
     """Execute the requested CLI task (scrape or monitor)."""
-    # Configure logging before any other operations
-    configure_logging(
-        log_file=args.log_file,
-        log_level=args.log_level,
-        max_log_filesize=args.max_log_filesize,
-        log_stdout=args.log_stdout,
-        verbose=args.verbose,
-    )
+    configure_logging(log_level=args.log_level, verbose=args.verbose)
 
     if args.config is not None:
         load_config(args.config)
@@ -580,7 +495,7 @@ async def dispatch(args: argparse.Namespace) -> None:
             providers=providers,
             leagues=leagues,
             fs_sink_dir=fs_sink_dir,
-            overwrite=args.overwrite,
+            overwrite=args.overwrite_games,
             sink=sink,
             merge_sportdata_games=merge_sportdata_games,
             merge_rollinginsights_games=merge_rollinginsights_games,

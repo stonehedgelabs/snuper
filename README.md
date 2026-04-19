@@ -86,14 +86,13 @@ Sample odds stream (odds/20240104-nba-401234567.json):
 ```text
 usage: cli.py [-h] [-p PROVIDER] -t {scrape,monitor} [-c CONFIG] [-l LEAGUE]
               [--fs-sink-dir FS_SINK_DIR]
-              [--monitor-interval MONITOR_INTERVAL] [--overwrite]
+              [--monitor-interval MONITOR_INTERVAL] [--overwrite-games]
               [--sink {fs,rds,cache}] [--rds-uri RDS_URI]
               [--rds-table RDS_TABLE] [--cache-uri CACHE_URI]
               [--cache-ttl CACHE_TTL] [--cache-max-items CACHE_MAX_ITEMS]
               [--merge-sportdata-games] [--merge-rollinginsights-games]
-              [--merge-all-games] [--log-file LOG_FILE]
-              [--log-level LOG_LEVEL] [--max-log-filesize MAX_LOG_FILESIZE]
-              [--log-stdout] [--early-exit] [--verbose]
+              [--merge-all-games] [--log-level LOG_LEVEL]
+              [--early-exit] [--verbose]
 
 Unified Event Monitor CLI
 
@@ -113,7 +112,7 @@ options:
                         Base directory for filesystem snapshots and odds logs
   --monitor-interval MONITOR_INTERVAL
                         Refresh interval in seconds for the DraftKings monitor
-  --overwrite           Overwrite existing snapshots instead of skipping
+  --overwrite-games     Overwrite existing game snapshots instead of skipping
   --sink {fs,rds,cache}
                         Destination sink for selection updates (default: fs)
   --rds-uri RDS_URI     Database connection URI when using the rds sink
@@ -134,15 +133,9 @@ options:
   --merge-all-games     Match and merge both Sportdata and Rolling Insights
                         games (equivalent to using both --merge-sportdata-
                         games and --merge-rollinginsights-games)
-  --log-file LOG_FILE   Path to log file (default: /tmp/snuper-YYYYmmdd.log)
   --log-level LOG_LEVEL
                         Logging level as a string (debug, info, warning,
                         error, critical) or number 0-50 (default: info)
-  --max-log-filesize MAX_LOG_FILESIZE
-                        Maximum log file size before rotation with FIFO
-                        eviction (default: 10MB, accepts formats like '10MB',
-                        '5mb', '100Mb')
-  --log-stdout          Log to stdout as well as to --log-file
   --early-exit          Exit monitor after 60 minutes of no live games (EOD
                         detection). Without this flag, monitor runs forever.
   --verbose             Enable verbose logging for monitor and sink operations
@@ -165,16 +158,13 @@ options:
   `--rds-table`. The sink expects the primary table to provide `id`, `provider`, `league`,
   `event_id`, `data` (JSON/JSONB), and `created_at` columns.
 - Restrict execution with `--league nba,mlb` for targeted runs.
-- Use `--overwrite` to replace existing daily snapshots during a rescrape.
+- Use `--overwrite-games` to replace existing daily game snapshots during a rescrape.
 - Use `--config` to specify a TOML configuration file for API keys and other settings.
 - Use `--merge-sportdata-games` or `--merge-rollinginsights-games` (or `--merge-all-games` for both)
   to enrich scraped events with official game data from third-party APIs.
 - DraftKings monitors honor `--monitor-interval`; other providers pace themselves.
-- Configure logging with `--log-file` (default: `/tmp/snuper-YYYYmmdd.log`), `--log-level`
-  (default: `info`, accepts string levels like `debug` or numeric levels 0-50), and
-  `--max-log-filesize` (default: `10MB`, accepts formats like `10MB`, `5mb`, or `100Mb`).
-  When the log file reaches the maximum size, earlier logs are evicted (FIFO behavior) to
-  keep the file size under the limit. Use `--log-stdout` to also output logs to stdout.
+- Logs stream to stdout by default. Control verbosity with `--log-level` (default:
+  `info`, accepts string levels like `debug` or numeric levels 0-50).
 - Use `--early-exit` to automatically terminate monitors after 60 minutes of no live games
   (EOD detection). Without this flag, monitors run indefinitely.
 - Use `--verbose` to enable detailed logging for monitor and sink operations, including
@@ -197,7 +187,7 @@ $ snuper --task scrape \
   --sink rds \
   --rds-uri postgresql://user:pass@localhost/sports_db \
   --rds-table events \
-  --overwrite
+  --overwrite-games
 ```
 
 ```sh
@@ -285,7 +275,7 @@ and odds deltas. Each sink stores and reloads data a little differently.
 
 ### Filesystem sink (`--sink=fs`)
 
-- `scrape` writes snapshot JSON files to `<fs_sink_dir>/<provider>/events/YYYYMMDD-<league>.json`. Existing files are skipped unless `--overwrite` is
+- `scrape` writes snapshot JSON files to `<fs_sink_dir>/<provider>/events/YYYYMMDD-<league>.json`. Existing files are skipped unless `--overwrite-games` is
   supplied.
 - `monitor` appends newline-delimited JSON records to `<fs_sink_dir>/<provider>/odds/YYYYMMDD-<league>-<event_id>.json`, capturing each selection change in order.
 - `load_snapshots` rehydrates events by reading the snapshot JSON under the

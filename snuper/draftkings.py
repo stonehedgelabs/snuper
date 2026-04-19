@@ -369,7 +369,7 @@ class DraftkingsEventScraper(BaseEventScraper):
         """
         date_text = date_text.strip()
 
-        if league == League.MLB.value:
+        if league in (League.MLB.value, League.NBA.value):
             try:
                 # Remove day of week if present (e.g., "Thu " from "Thu Mar 26th 5:30 PM")
                 cleaned = re.sub(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+', '', date_text, flags=re.IGNORECASE)
