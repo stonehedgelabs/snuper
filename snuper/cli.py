@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import logging
 import pathlib
 import re
@@ -21,6 +22,7 @@ from dotenv import load_dotenv
 
 from snuper import betmgm, bovada, draftkings, fanduel
 from snuper.config import load_config
+from snuper.merge_rs_games import run_backfill
 from snuper.sinks import SelectionSink, SinkType, build_sink
 from snuper.constants import Provider, TaskType, SUPPORTED_LEAGUES
 
@@ -323,7 +325,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-t",
         "--task",
-        choices=[TaskType.SCRAPE.value, TaskType.MONITOR.value],
+        choices=[
+            TaskType.SCRAPE.value,
+            TaskType.MONITOR.value,
+            TaskType.BACKFILL_RS_GAMES.value,
+        ],
         required=True,
         help="Operation to perform",
     )
@@ -415,6 +421,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable verbose logging for monitor and sink operations (e.g., log 'not starting monitor' and 'has 0 live games' messages)",
     )
+    parser.add_argument(
+        "-d",
+        "--date",
+        help="Target date YYYY-mm-dd (required for --task backfill-rs-games)",
+    )
+    parser.add_argument(
+        "--arb-url",
+        default="https://api.arbi.gg",
+        help="Base URL for the arb API (default: https://api.arbi.gg)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="For --task backfill-rs-games: print matches but write nothing",
+    )
     return parser
 
 
@@ -423,18 +444,19 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     if args.config is not None and not args.config.is_file():
         parser.error("--config must point to an existing configuration file")
     sink_type = SinkType(args.sink)
-    if sink_type is SinkType.FS and args.fs_sink_dir is None:
-        parser.error("--fs-sink-dir is required when --sink=fs")
-    if sink_type is SinkType.RDS:
-        if not args.rds_uri or not args.rds_table:
-            parser.error("--rds-uri and --rds-table are required when --sink=rds")
-    if sink_type is SinkType.CACHE:
-        if not args.cache_uri:
-            parser.error("--cache-uri is required when --sink=cache")
-        if args.cache_ttl is None or args.cache_ttl <= 0:
-            parser.error("--cache-ttl must be provided as a positive integer when --sink=cache")
-        if args.cache_max_items is None or args.cache_max_items <= 0:
-            parser.error("--cache-max-items must be provided as a positive integer when --sink=cache")
+    if args.task != TaskType.BACKFILL_RS_GAMES.value:
+        if sink_type is SinkType.FS and args.fs_sink_dir is None:
+            parser.error("--fs-sink-dir is required when --sink=fs")
+        if sink_type is SinkType.RDS:
+            if not args.rds_uri or not args.rds_table:
+                parser.error("--rds-uri and --rds-table are required when --sink=rds")
+        if sink_type is SinkType.CACHE:
+            if not args.cache_uri:
+                parser.error("--cache-uri is required when --sink=cache")
+            if args.cache_ttl is None or args.cache_ttl <= 0:
+                parser.error("--cache-ttl must be provided as a positive integer when --sink=cache")
+            if args.cache_max_items is None or args.cache_max_items <= 0:
+                parser.error("--cache-max-items must be provided as a positive integer when --sink=cache")
     if args.merge_all_games and (args.merge_sportdata_games or args.merge_rollinginsights_games):
         parser.error("--merge-all-games cannot be used with --merge-sportdata-games or --merge-rollinginsights-games")
     if (
@@ -446,14 +468,34 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     if (args.merge_sportdata_games or args.merge_all_games) and args.config is None:
         parser.error("--merge-sportdata-games and --merge-all-games require --config to be specified")
 
+    if args.task == TaskType.BACKFILL_RS_GAMES.value:
+        if not args.date:
+            parser.error("--date is required when --task backfill-rs-games")
+        try:
+            dt.datetime.strptime(args.date, "%Y-%m-%d")
+        except ValueError:
+            parser.error("--date must be YYYY-mm-dd")
+        if not args.rds_uri:
+            parser.error("--rds-uri is required when --task backfill-rs-games")
+        if not args.league or len(args.league) != 1:
+            parser.error("exactly one --league is required when --task backfill-rs-games")
+        if not args.provider or len(args.provider) != 1:
+            parser.error("exactly one --provider is required when --task backfill-rs-games")
+
 
 async def dispatch(args: argparse.Namespace) -> None:
-    """Execute the requested CLI task (scrape or monitor)."""
+    """Execute the requested CLI task (scrape, monitor, or backfill-rs-games)."""
     configure_logging(log_level=args.log_level, verbose=args.verbose)
 
     if args.config is not None:
         load_config(args.config)
         logger.info("Loaded configuration from %s", args.config)
+
+    if args.task == TaskType.BACKFILL_RS_GAMES.value:
+        exit_code = run_backfill(args)
+        if exit_code != 0:
+            raise SystemExit(exit_code)
+        return
 
     if args.provider:
         providers = list(args.provider)

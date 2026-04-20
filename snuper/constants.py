@@ -25,6 +25,7 @@ class TaskType(enum.Enum):
 
     SCRAPE = "scrape"
     MONITOR = "monitor"
+    BACKFILL_RS_GAMES = "backfill-rs-games"
 
 
 # ANSI escape code for cyan log output.
